@@ -1,0 +1,44 @@
+version: "2"
+sql:
+  - engine: "postgresql"
+    schema: "schema.sql"
+    queries: "queries"
+    gen:
+      go:
+        package: "sqlcgen"
+        out: "sqlcgen"
+        sql_package: "pgx/v5"
+        emit_pointers_for_null_types: true
+        emit_empty_slices: true
+        overrides:
+          # NOT NULL timestamptz → time.Time
+          - db_type: "pg_catalog.timestamptz"
+            go_type:
+              import: "time"
+              type: "Time"
+          - db_type: "timestamptz"
+            go_type:
+              import: "time"
+              type: "Time"
+          # nullable timestamptz → *time.Time
+          - db_type: "pg_catalog.timestamptz"
+            nullable: true
+            go_type:
+              import: "time"
+              type: "Time"
+              pointer: true
+          - db_type: "timestamptz"
+            nullable: true
+            go_type:
+              import: "time"
+              type: "Time"
+              pointer: true
+          # на случай, если sqlc парсит как timestamp (без time zone)
+          - db_type: "pg_catalog.timestamp"
+            go_type:
+              import: "time"
+              type: "Time"
+          - db_type: "timestamp"
+            go_type:
+              import: "time"
+              type: "Time"
