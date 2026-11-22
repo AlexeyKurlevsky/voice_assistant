@@ -1,12 +1,12 @@
 CREATE TABLE users (
-    id          BIGSERIAL   PRIMARY KEY,
+    id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     external_id TEXT        NOT NULL UNIQUE,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE meetings (
-    id                BIGSERIAL   PRIMARY KEY,
-    user_id           BIGINT      NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    id                UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id           UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     title             TEXT        NOT NULL,
     original_filename TEXT        NOT NULL,
     file_path         TEXT        NOT NULL,
@@ -15,8 +15,8 @@ CREATE TABLE meetings (
 CREATE INDEX idx_meetings_user_created ON meetings (user_id, created_at DESC);
 
 CREATE TABLE processing_tasks (
-    id            BIGSERIAL   PRIMARY KEY,
-    meeting_id    BIGINT      NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+    id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    meeting_id    UUID        NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
     status        TEXT        NOT NULL
                   CHECK (status IN ('created','processing','transcribed',
                                     'summarized','completed','failed')),
@@ -29,8 +29,8 @@ CREATE TABLE processing_tasks (
 CREATE INDEX idx_tasks_status ON processing_tasks (status);
 
 CREATE TABLE status_history (
-    id         BIGSERIAL   PRIMARY KEY,
-    task_id    BIGINT      NOT NULL REFERENCES processing_tasks(id) ON DELETE CASCADE,
+    id         UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    task_id    UUID        NOT NULL REFERENCES processing_tasks(id) ON DELETE CASCADE,
     old_status TEXT,
     new_status TEXT        NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -38,8 +38,8 @@ CREATE TABLE status_history (
 CREATE INDEX idx_status_history_task ON status_history (task_id, created_at);
 
 CREATE TABLE transcriptions (
-    id         BIGSERIAL   PRIMARY KEY,
-    meeting_id BIGINT      NOT NULL UNIQUE REFERENCES meetings(id) ON DELETE CASCADE,
+    id         UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    meeting_id UUID        NOT NULL UNIQUE REFERENCES meetings(id) ON DELETE CASCADE,
     text       TEXT        NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -47,8 +47,8 @@ CREATE INDEX idx_transcriptions_fts
     ON transcriptions USING GIN (to_tsvector('simple', text));
 
 CREATE TABLE summaries (
-    id         BIGSERIAL   PRIMARY KEY,
-    meeting_id BIGINT      NOT NULL UNIQUE REFERENCES meetings(id) ON DELETE CASCADE,
+    id         UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    meeting_id UUID        NOT NULL UNIQUE REFERENCES meetings(id) ON DELETE CASCADE,
     text       TEXT        NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -56,9 +56,9 @@ CREATE INDEX idx_summaries_fts
     ON summaries USING GIN (to_tsvector('simple', text));
 
 CREATE TABLE chat_messages (
-    id         BIGSERIAL   PRIMARY KEY,
-    user_id    BIGINT      NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    meeting_id BIGINT      NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+    id         UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id    UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    meeting_id UUID        NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
     question   TEXT        NOT NULL,
     answer     TEXT        NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()

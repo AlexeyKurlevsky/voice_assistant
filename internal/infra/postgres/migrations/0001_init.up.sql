@@ -1,77 +1,73 @@
-package main
+-- users
+CREATE TABLE users (
+    id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    external_id TEXT        NOT NULL UNIQUE,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 
-import (
-	"context"
-	"errors"
-	"fmt"
-	"log/slog"
-	"os"
-	"os/signal"
-	"syscall"
+-- meetings
+CREATE TABLE meetings (
+    id                UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id           UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    title             TEXT        NOT NULL,
+    original_filename TEXT        NOT NULL,
+    file_path         TEXT        NOT NULL,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_meetings_user_created ON meetings (user_id, created_at DESC);
 
-	"github.com/joho/godotenv"
+-- processing_tasks
+CREATE TABLE processing_tasks (
+    id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    meeting_id    UUID        NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+    status        TEXT        NOT NULL
+                  CHECK (status IN ('created','processing','transcribed',
+                                    'summarized','completed','failed')),
+    error_message TEXT,
+    attempts      INT         NOT NULL DEFAULT 0,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (meeting_id)
+);
+CREATE INDEX idx_tasks_status ON processing_tasks (status);
 
-	"github.com/AlexeyKurlevsky/voice_assistant/application"
-	"github.com/AlexeyKurlevsky/voice_assistant/cli"
-	"github.com/AlexeyKurlevsky/voice_assistant/config"
-	"github.com/AlexeyKurlevsky/voice_assistant/domain"
-	"github.com/AlexeyKurlevsky/voice_assistant/infra/postgres"
-	"github.com/AlexeyKurlevsky/voice_assistant/logger"
-)
+-- status_history
+CREATE TABLE status_history (
+    id         UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    task_id    UUID        NOT NULL REFERENCES processing_tasks(id) ON DELETE CASCADE,
+    old_status TEXT,
+    new_status TEXT        NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_status_history_task ON status_history (task_id, created_at);
 
-func main() {
-	_ = godotenv.Load()
+-- transcriptions
+CREATE TABLE transcriptions (
+    id         UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    meeting_id UUID        NOT NULL UNIQUE REFERENCES meetings(id) ON DELETE CASCADE,
+    text       TEXT        NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_transcriptions_fts
+    ON transcriptions USING GIN (to_tsvector('simple', text));
 
-	cfg, err := config.Load()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(3)
-	}
+-- summaries
+CREATE TABLE summaries (
+    id         UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    meeting_id UUID        NOT NULL UNIQUE REFERENCES meetings(id) ON DELETE CASCADE,
+    text       TEXT        NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_summaries_fts
+    ON summaries USING GIN (to_tsvector('simple', text));
 
-	log := logger.New(cfg)
-	slog.SetDefault(log)
-
-	os.Exit(run(cfg, log))
-}
-
-func run(cfg *config.Config, log *slog.Logger) int {
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
-
-	pool, err := postgres.NewPool(ctx, cfg.DBDSN, cfg.DBMaxConns)
-	if err != nil {
-		log.Error("postgres pool", "err", err)
-		return 3
-	}
-	defer pool.Close()
-
-	if cfg.MigrateOnStart {
-		if err := postgres.Migrate(ctx, cfg.DBDSN); err != nil {
-			log.Error("migrate", "err", err)
-			return 3
-		}
-	}
-
-	userRepo := postgres.NewUserRepo(pool)
-	userService := application.NewUserService(userRepo)
-
-	deps := &cli.Deps{UserService: userService}
-	root := cli.NewRoot(deps)
-
-	if err := root.ExecuteContext(ctx); err != nil {
-		log.Error("cli", "err", err)
-		return exitCodeFor(err)
-	}
-	return 0
-}
-
-func exitCodeFor(err error) int {
-	switch {
-	case errors.Is(err, domain.ErrInvalidArgument):
-		return 2
-	case errors.Is(err, domain.ErrNotFound), errors.Is(err, domain.ErrForbidden):
-		return 1
-	default:
-		return 3
-	}
-}
+-- chat_messages
+CREATE TABLE chat_messages (
+    id         UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id    UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    meeting_id UUID        NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+    question   TEXT        NOT NULL,
+    answer     TEXT        NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_chat_user_meeting ON chat_messages (user_id, meeting_id, created_at DESC);

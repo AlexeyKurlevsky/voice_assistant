@@ -1,9 +1,13 @@
 package domain
 
-import "time"
+import (
+	"time"
+
+	"github.com/google/uuid"
+)
 
 type User struct {
-	ID         int64
+	ID         uuid.UUID
 	ExternalID string
 	CreatedAt  time.Time
 }

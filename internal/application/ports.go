@@ -3,6 +3,8 @@ package application
 import (
 	"context"
 
+	"github.com/google/uuid"
+
 	"github.com/AlexeyKurlevsky/voice_assistant/internal/domain"
 )
 
@@ -12,21 +14,14 @@ type UserRepo interface {
 }
 
 type MeetingRepo interface {
-	// CreateWithTask — атомарно создаёт встречу и задачу обработки
-	// (status=created) вместе с записью в status_history.
 	CreateWithTask(ctx context.Context, m *domain.Meeting) (*domain.Task, error)
-
-	ListByUser(ctx context.Context, userID int64, limit, offset int) ([]domain.MeetingListItem, error)
+	ListByUser(ctx context.Context, userID uuid.UUID, limit, offset int) ([]domain.MeetingListItem, error)
 }
 
 type TaskRepo interface {
-	// MarkFailed — атомарно переводит задачу в status=failed
-	// и записывает error_message в status_history.
-	MarkFailed(ctx context.Context, taskID int64, errMsg string) error
+	MarkFailed(ctx context.Context, taskID uuid.UUID, errMsg string) error
 }
 
-// Enqueuer — минимальный контракт постановки задачи в очередь обработки.
-// Реализация — application.WorkerPool (появится в 2b).
 type Enqueuer interface {
-	Enqueue(ctx context.Context, taskID int64) error
+	Enqueue(ctx context.Context, taskID uuid.UUID) error
 }

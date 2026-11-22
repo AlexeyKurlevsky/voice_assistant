@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -21,8 +22,7 @@ func NewTaskRepo(pool *pgxpool.Pool) *TaskRepo {
 	return &TaskRepo{pool: pool, q: sqlcgen.New(pool)}
 }
 
-// MarkFailed — T6 из docs/DATA_MODEL.md §4.
-func (r *TaskRepo) MarkFailed(ctx context.Context, taskID int64, errMsg string) error {
+func (r *TaskRepo) MarkFailed(ctx context.Context, taskID uuid.UUID, errMsg string) error {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("task_repo.MarkFailed: begin: %w", err)
@@ -31,7 +31,7 @@ func (r *TaskRepo) MarkFailed(ctx context.Context, taskID int64, errMsg string) 
 
 	qtx := r.q.WithTx(tx)
 
-	cur, err := qtx.GetTaskStatus(ctx, taskID)
+	cur, err := qtx.GetTaskStatus(ctx, toPgUUID(taskID))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return domain.ErrNotFound
@@ -40,7 +40,7 @@ func (r *TaskRepo) MarkFailed(ctx context.Context, taskID int64, errMsg string) 
 	}
 
 	if err := qtx.MarkTaskFailed(ctx, sqlcgen.MarkTaskFailedParams{
-		ID:           taskID,
+		ID:           toPgUUID(taskID),
 		ErrorMessage: &errMsg,
 	}); err != nil {
 		return fmt.Errorf("task_repo.MarkFailed: update: %w", err)
@@ -48,7 +48,7 @@ func (r *TaskRepo) MarkFailed(ctx context.Context, taskID int64, errMsg string) 
 
 	oldStatus := cur
 	if err := qtx.InsertStatusHistory(ctx, sqlcgen.InsertStatusHistoryParams{
-		TaskID:    taskID,
+		TaskID:    toPgUUID(taskID),
 		OldStatus: &oldStatus,
 		NewStatus: string(domain.StatusFailed),
 	}); err != nil {

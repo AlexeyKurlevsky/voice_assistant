@@ -8,6 +8,8 @@ package sqlcgen
 import (
 	"context"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const createTask = `-- name: CreateTask :one
@@ -17,13 +19,13 @@ RETURNING id, meeting_id, status, attempts, created_at, updated_at
 `
 
 type CreateTaskParams struct {
-	MeetingID int64
+	MeetingID pgtype.UUID
 	Status    string
 }
 
 type CreateTaskRow struct {
-	ID        int64
-	MeetingID int64
+	ID        pgtype.UUID
+	MeetingID pgtype.UUID
 	Status    string
 	Attempts  int32
 	CreatedAt time.Time
@@ -48,7 +50,7 @@ const getTaskStatus = `-- name: GetTaskStatus :one
 SELECT status FROM processing_tasks WHERE id = $1
 `
 
-func (q *Queries) GetTaskStatus(ctx context.Context, id int64) (string, error) {
+func (q *Queries) GetTaskStatus(ctx context.Context, id pgtype.UUID) (string, error) {
 	row := q.db.QueryRow(ctx, getTaskStatus, id)
 	var status string
 	err := row.Scan(&status)
@@ -61,7 +63,7 @@ VALUES ($1, $2, $3)
 `
 
 type InsertStatusHistoryParams struct {
-	TaskID    int64
+	TaskID    pgtype.UUID
 	OldStatus *string
 	NewStatus string
 }
@@ -80,7 +82,7 @@ WHERE id = $1
 `
 
 type MarkTaskFailedParams struct {
-	ID           int64
+	ID           pgtype.UUID
 	ErrorMessage *string
 }
 

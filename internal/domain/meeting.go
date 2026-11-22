@@ -1,21 +1,24 @@
 package domain
 
-import "time"
+import (
+	"time"
+
+	"github.com/google/uuid"
+)
 
 type Meeting struct {
-	ID               int64
-	UserID           int64
+	ID               uuid.UUID
+	UserID           uuid.UUID
 	Title            string
 	OriginalFilename string
 	FilePath         string
 	CreatedAt        time.Time
 }
 
-// MeetingListItem — строка для команды list.
 type MeetingListItem struct {
-	ID        int64
+	ID        uuid.UUID
 	Title     string
 	Status    Status
-	Summary   string // "" если выжимки ещё нет
+	Summary   string
 	CreatedAt time.Time
 }

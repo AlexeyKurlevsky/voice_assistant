@@ -15,12 +15,16 @@ type Config struct {
 	DBMaxConns     int32
 	MigrateOnStart bool
 
+	// Файлы
+	UploadDir      string
+	MaxUploadBytes int64
+
 	// Обработка
 	WorkerConcurrency int
 	JobQueueCapacity  int
 	ShutdownTimeout   time.Duration
 
-	// Провайдеры (используются начиная со следующего батча)
+	// Провайдеры (батч 3)
 	SpeechProvider string
 	LLMProvider    string
 
@@ -29,23 +33,16 @@ type Config struct {
 	LogFormat string
 }
 
-// LoadOptions управляет источниками конфигурации.
-// Нулевое значение = загрузить ".env" (типичное поведение для CLI).
-// В тестах передавайте LoadOptions{EnvFile: ""} — читать будет только os.Getenv.
 type LoadOptions struct {
 	EnvFile string
 }
 
-// Load — сахар для типичного случая: .env в текущей директории.
 func Load() (*Config, error) {
 	return LoadWithOptions(LoadOptions{EnvFile: ".env"})
 }
 
 func LoadWithOptions(opts LoadOptions) (*Config, error) {
 	if opts.EnvFile != "" {
-		// Файла может не быть — это нормально. godotenv не перезаписывает
-		// уже установленные переменные окружения, приоритет сохраняется:
-		// defaults → .env → env процесса.
 		_ = godotenv.Load(opts.EnvFile)
 	}
 
@@ -53,6 +50,8 @@ func LoadWithOptions(opts LoadOptions) (*Config, error) {
 		DBDSN:             os.Getenv("MS_DB_DSN"),
 		DBMaxConns:        int32(getEnvInt("MS_DB_MAX_CONNS", 10)),
 		MigrateOnStart:    getEnvBool("MS_MIGRATE_ON_START", true),
+		UploadDir:         getEnv("MS_UPLOAD_DIR", "./data/uploads"),
+		MaxUploadBytes:    int64(getEnvInt("MS_MAX_UPLOAD_BYTES", 100*1024*1024)),
 		WorkerConcurrency: getEnvInt("MS_WORKER_CONCURRENCY", 3),
 		JobQueueCapacity:  getEnvInt("MS_JOB_QUEUE_CAPACITY", 100),
 		ShutdownTimeout:   getEnvDuration("MS_SHUTDOWN_TIMEOUT", 10*time.Second),
@@ -73,6 +72,9 @@ func LoadWithOptions(opts LoadOptions) (*Config, error) {
 	}
 	if c.ShutdownTimeout <= 0 {
 		return nil, fmt.Errorf("config: MS_SHUTDOWN_TIMEOUT must be > 0")
+	}
+	if c.MaxUploadBytes <= 0 {
+		return nil, fmt.Errorf("config: MS_MAX_UPLOAD_BYTES must be > 0")
 	}
 	return c, nil
 }

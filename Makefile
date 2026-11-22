@@ -2,6 +2,7 @@ BINARY   = ./bin/voice-assistant
 PKG      = ./cmd/voice-assistant
 MIGRATE  = migrate
 SQLC_DIR = internal/infra/postgres
+MS_DB_DSN = postgres://postgres:postgres@localhost:5432/voice_assistant?sslmode=disable
 
 .PHONY: build run test test-race sqlc sqlc-check migrate-up migrate-down lint tidy
 

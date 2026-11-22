@@ -8,6 +8,8 @@ package sqlcgen
 import (
 	"context"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const createMeeting = `-- name: CreateMeeting :one
@@ -17,7 +19,7 @@ RETURNING id, user_id, title, original_filename, file_path, created_at
 `
 
 type CreateMeetingParams struct {
-	UserID           int64
+	UserID           pgtype.UUID
 	Title            string
 	OriginalFilename string
 	FilePath         string
@@ -55,13 +57,13 @@ LIMIT $2 OFFSET $3
 `
 
 type ListMeetingsByUserParams struct {
-	UserID int64
+	UserID pgtype.UUID
 	Limit  int32
 	Offset int32
 }
 
 type ListMeetingsByUserRow struct {
-	ID        int64
+	ID        pgtype.UUID
 	Title     string
 	CreatedAt time.Time
 	Status    string

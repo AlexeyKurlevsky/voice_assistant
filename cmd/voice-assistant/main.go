@@ -16,6 +16,7 @@ import (
 	"github.com/AlexeyKurlevsky/voice_assistant/internal/infra/postgres"
 	"github.com/AlexeyKurlevsky/voice_assistant/internal/infra/postgres/repo"
 	"github.com/AlexeyKurlevsky/voice_assistant/internal/logger"
+	"github.com/AlexeyKurlevsky/voice_assistant/internal/worker"
 )
 
 func main() {
@@ -35,6 +36,7 @@ func run(cfg *config.Config, log *slog.Logger) int {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	// Пул соединений
 	pool, err := postgres.NewPool(ctx, cfg.DBDSN, cfg.DBMaxConns)
 	if err != nil {
 		log.Error("postgres pool", "err", err)
@@ -42,6 +44,7 @@ func run(cfg *config.Config, log *slog.Logger) int {
 	}
 	defer pool.Close()
 
+	// Миграции
 	if cfg.MigrateOnStart {
 		if err := postgres.Migrate(ctx, cfg.DBDSN); err != nil {
 			log.Error("migrate", "err", err)
@@ -49,15 +52,45 @@ func run(cfg *config.Config, log *slog.Logger) int {
 		}
 	}
 
+	// Репозитории
 	userRepo := repo.NewUserRepo(pool)
-	userService := application.NewUserService(userRepo)
+	meetingRepo := repo.NewMeetingRepo(pool)
+	taskRepo := repo.NewTaskRepo(pool)
 
-	deps := &cli.Deps{UserService: userService}
+	// Worker pool
+	wp := application.NewWorkerPool(
+		cfg.WorkerConcurrency,
+		cfg.JobQueueCapacity,
+		worker.NewProcessor(log),
+		log,
+	)
+	wp.Start(ctx)
+
+	// Сервисы
+	userService := application.NewUserService(userRepo)
+	meetingService := application.NewMeetingService(
+		meetingRepo, taskRepo, wp, cfg.UploadDir, cfg.MaxUploadBytes, log,
+	)
+
+	// CLI
+	deps := &cli.Deps{
+		UserService:    userService,
+		MeetingService: meetingService,
+	}
 	root := cli.NewRoot(deps)
 
-	if err := root.ExecuteContext(ctx); err != nil {
-		log.Error("cli", "err", err)
-		return exitCodeFor(err)
+	cliErr := root.ExecuteContext(ctx)
+
+	// Graceful shutdown
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
+	defer cancel()
+	if err := wp.Stop(shutdownCtx); err != nil {
+		log.Warn("worker pool stop", "err", err)
+	}
+
+	if cliErr != nil && !errors.Is(cliErr, context.Canceled) {
+		log.Error("cli", "err", cliErr)
+		return exitCodeFor(cliErr)
 	}
 	return 0
 }

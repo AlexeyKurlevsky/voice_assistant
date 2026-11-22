@@ -22,14 +22,14 @@ func newStartCmd(deps *Deps, userID *string, jsonOut *bool) *cobra.Command {
 
 			if *jsonOut {
 				return json.NewEncoder(cmd.OutOrStdout()).Encode(struct {
-					UserID     int64     `json:"user_id"`
+					UserID     string    `json:"user_id"`
 					ExternalID string    `json:"external_id"`
 					CreatedAt  time.Time `json:"created_at"`
-				}{u.ID, u.ExternalID, u.CreatedAt})
+				}{u.ID.String(), u.ExternalID, u.CreatedAt})
 			}
 
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(),
-				"user_id: %d\nexternal_id: %s\ncreated_at: %s\n",
+				"user_id: %s\nexternal_id: %s\ncreated_at: %s\n",
 				u.ID, u.ExternalID, u.CreatedAt.Format(time.RFC3339))
 			return nil
 		},

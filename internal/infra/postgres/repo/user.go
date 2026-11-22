@@ -41,7 +41,7 @@ func (r *UserRepo) GetByExternalID(ctx context.Context, externalID string) (*dom
 
 func toDomainUser(row sqlcgen.User) *domain.User {
 	return &domain.User{
-		ID:         row.ID,
+		ID:         toUUID(row.ID),
 		ExternalID: row.ExternalID,
 		CreatedAt:  row.CreatedAt,
 	}

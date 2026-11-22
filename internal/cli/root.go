@@ -6,13 +6,11 @@ import (
 	"github.com/AlexeyKurlevsky/voice_assistant/internal/application"
 )
 
-// Deps — то, что нужно CLI-командам.
-// По мере роста команд добавятся другие сервисы и пул воркеров.
 type Deps struct {
-	UserService *application.UserService
+	UserService    *application.UserService
+	MeetingService *application.MeetingService
 }
 
-// NewRoot создаёт корневую команду со всеми подкомандами.
 func NewRoot(deps *Deps) *cobra.Command {
 	var (
 		userID  string
@@ -20,8 +18,8 @@ func NewRoot(deps *Deps) *cobra.Command {
 	)
 
 	root := &cobra.Command{
-		Use:           "meeting-assistant",
-		Short:         "Meeting assistant: загрузка, обработка и поиск встреч",
+		Use:           "voice-assistant",
+		Short:         "Voice assistant: загрузка, обработка и поиск встреч",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
@@ -32,17 +30,9 @@ func NewRoot(deps *Deps) *cobra.Command {
 
 	root.AddCommand(
 		newStartCmd(deps, &userID, &jsonOut),
+		newLoadCmd(deps, &userID, &jsonOut),
+		newListCmd(deps, &userID, &jsonOut),
 	)
 
 	return root
-}
-
-// extractUser — единый хелпер: возвращает user_id, читает флаг из родителя.
-// Пока используется в start.go, позже — во всех командах.
-func extractUser(cmd *cobra.Command) (string, error) {
-	id, err := cmd.Flags().GetString("user")
-	if err != nil {
-		return "", err
-	}
-	return id, nil
 }

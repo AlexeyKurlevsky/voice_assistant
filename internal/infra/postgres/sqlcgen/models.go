@@ -6,20 +6,22 @@ package sqlcgen
 
 import (
 	"time"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type ChatMessage struct {
-	ID        int64
-	UserID    int64
-	MeetingID int64
+	ID        pgtype.UUID
+	UserID    pgtype.UUID
+	MeetingID pgtype.UUID
 	Question  string
 	Answer    string
 	CreatedAt time.Time
 }
 
 type Meeting struct {
-	ID               int64
-	UserID           int64
+	ID               pgtype.UUID
+	UserID           pgtype.UUID
 	Title            string
 	OriginalFilename string
 	FilePath         string
@@ -27,8 +29,8 @@ type Meeting struct {
 }
 
 type ProcessingTask struct {
-	ID           int64
-	MeetingID    int64
+	ID           pgtype.UUID
+	MeetingID    pgtype.UUID
 	Status       string
 	ErrorMessage *string
 	Attempts     int32
@@ -37,29 +39,29 @@ type ProcessingTask struct {
 }
 
 type StatusHistory struct {
-	ID        int64
-	TaskID    int64
+	ID        pgtype.UUID
+	TaskID    pgtype.UUID
 	OldStatus *string
 	NewStatus string
 	CreatedAt time.Time
 }
 
 type Summary struct {
-	ID        int64
-	MeetingID int64
+	ID        pgtype.UUID
+	MeetingID pgtype.UUID
 	Text      string
 	CreatedAt time.Time
 }
 
 type Transcription struct {
-	ID        int64
-	MeetingID int64
+	ID        pgtype.UUID
+	MeetingID pgtype.UUID
 	Text      string
 	CreatedAt time.Time
 }
 
 type User struct {
-	ID         int64
+	ID         pgtype.UUID
 	ExternalID string
 	CreatedAt  time.Time
 }
