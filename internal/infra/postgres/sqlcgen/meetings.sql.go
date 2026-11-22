@@ -44,6 +44,52 @@ func (q *Queries) CreateMeeting(ctx context.Context, arg CreateMeetingParams) (M
 	return i, err
 }
 
+const getMeetingByTaskID = `-- name: GetMeetingByTaskID :one
+SELECT m.id, m.user_id, m.title, m.original_filename, m.file_path, m.created_at
+FROM meetings m
+JOIN processing_tasks t ON t.meeting_id = m.id
+WHERE t.id = $1
+`
+
+func (q *Queries) GetMeetingByTaskID(ctx context.Context, id pgtype.UUID) (Meeting, error) {
+	row := q.db.QueryRow(ctx, getMeetingByTaskID, id)
+	var i Meeting
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Title,
+		&i.OriginalFilename,
+		&i.FilePath,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getMeetingForUser = `-- name: GetMeetingForUser :one
+SELECT id, user_id, title, original_filename, file_path, created_at
+FROM meetings
+WHERE id = $1 AND user_id = $2
+`
+
+type GetMeetingForUserParams struct {
+	ID     pgtype.UUID
+	UserID pgtype.UUID
+}
+
+func (q *Queries) GetMeetingForUser(ctx context.Context, arg GetMeetingForUserParams) (Meeting, error) {
+	row := q.db.QueryRow(ctx, getMeetingForUser, arg.ID, arg.UserID)
+	var i Meeting
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Title,
+		&i.OriginalFilename,
+		&i.FilePath,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const listMeetingsByUser = `-- name: ListMeetingsByUser :many
 SELECT m.id, m.title, m.created_at,
        t.status,

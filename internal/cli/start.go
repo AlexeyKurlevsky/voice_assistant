@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// newStartCmd — команда start: регистрация пользователя (идемпотентно).
 func newStartCmd(deps *Deps, userID *string, jsonOut *bool) *cobra.Command {
 	return &cobra.Command{
 		Use:   "start",

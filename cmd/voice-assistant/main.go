@@ -1,3 +1,4 @@
+// Command voice-assistant — CLI для загрузки и обработки встреч.
 package main
 
 import (
@@ -32,11 +33,12 @@ func main() {
 	os.Exit(run(cfg, log))
 }
 
+// run собирает приложение и обрабатывает graceful shutdown.
+// Возвращает код выхода (0/1/2/3).
 func run(cfg *config.Config, log *slog.Logger) int {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	// Пул соединений
 	pool, err := postgres.NewPool(ctx, cfg.DBDSN, cfg.DBMaxConns)
 	if err != nil {
 		log.Error("postgres pool", "err", err)
@@ -44,7 +46,6 @@ func run(cfg *config.Config, log *slog.Logger) int {
 	}
 	defer pool.Close()
 
-	// Миграции
 	if cfg.MigrateOnStart {
 		if err := postgres.Migrate(ctx, cfg.DBDSN); err != nil {
 			log.Error("migrate", "err", err)
@@ -52,12 +53,10 @@ func run(cfg *config.Config, log *slog.Logger) int {
 		}
 	}
 
-	// Репозитории
 	userRepo := repo.NewUserRepo(pool)
 	meetingRepo := repo.NewMeetingRepo(pool)
 	taskRepo := repo.NewTaskRepo(pool)
 
-	// Worker pool
 	wp := application.NewWorkerPool(
 		cfg.WorkerConcurrency,
 		cfg.JobQueueCapacity,
@@ -66,13 +65,11 @@ func run(cfg *config.Config, log *slog.Logger) int {
 	)
 	wp.Start(ctx)
 
-	// Сервисы
 	userService := application.NewUserService(userRepo)
 	meetingService := application.NewMeetingService(
 		meetingRepo, taskRepo, wp, cfg.UploadDir, cfg.MaxUploadBytes, log,
 	)
 
-	// CLI
 	deps := &cli.Deps{
 		UserService:    userService,
 		MeetingService: meetingService,
@@ -81,7 +78,6 @@ func run(cfg *config.Config, log *slog.Logger) int {
 
 	cliErr := root.ExecuteContext(ctx)
 
-	// Graceful shutdown
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer cancel()
 	if err := wp.Stop(shutdownCtx); err != nil {
@@ -95,6 +91,7 @@ func run(cfg *config.Config, log *slog.Logger) int {
 	return 0
 }
 
+// exitCodeFor мапит доменные ошибки в коды возврата (docs/COMMANDS.md §2).
 func exitCodeFor(err error) int {
 	switch {
 	case errors.Is(err, domain.ErrInvalidArgument):

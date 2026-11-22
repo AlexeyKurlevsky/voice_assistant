@@ -46,6 +46,54 @@ func (q *Queries) CreateTask(ctx context.Context, arg CreateTaskParams) (CreateT
 	return i, err
 }
 
+const getTaskByID = `-- name: GetTaskByID :one
+SELECT id, meeting_id, status, error_message, attempts, created_at, updated_at
+FROM processing_tasks
+WHERE id = $1
+`
+
+func (q *Queries) GetTaskByID(ctx context.Context, id pgtype.UUID) (ProcessingTask, error) {
+	row := q.db.QueryRow(ctx, getTaskByID, id)
+	var i ProcessingTask
+	err := row.Scan(
+		&i.ID,
+		&i.MeetingID,
+		&i.Status,
+		&i.ErrorMessage,
+		&i.Attempts,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getTaskForMeetingAndUser = `-- name: GetTaskForMeetingAndUser :one
+SELECT t.id, t.meeting_id, t.status, t.error_message, t.attempts, t.created_at, t.updated_at
+FROM processing_tasks t
+JOIN meetings m ON m.id = t.meeting_id
+WHERE t.meeting_id = $1 AND m.user_id = $2
+`
+
+type GetTaskForMeetingAndUserParams struct {
+	MeetingID pgtype.UUID
+	UserID    pgtype.UUID
+}
+
+func (q *Queries) GetTaskForMeetingAndUser(ctx context.Context, arg GetTaskForMeetingAndUserParams) (ProcessingTask, error) {
+	row := q.db.QueryRow(ctx, getTaskForMeetingAndUser, arg.MeetingID, arg.UserID)
+	var i ProcessingTask
+	err := row.Scan(
+		&i.ID,
+		&i.MeetingID,
+		&i.Status,
+		&i.ErrorMessage,
+		&i.Attempts,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getTaskStatus = `-- name: GetTaskStatus :one
 SELECT status FROM processing_tasks WHERE id = $1
 `
@@ -73,11 +121,81 @@ func (q *Queries) InsertStatusHistory(ctx context.Context, arg InsertStatusHisto
 	return err
 }
 
+const listPendingTasks = `-- name: ListPendingTasks :many
+SELECT id FROM processing_tasks WHERE status = 'created'
+`
+
+func (q *Queries) ListPendingTasks(ctx context.Context) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, listPendingTasks)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listStatusHistory = `-- name: ListStatusHistory :many
+SELECT task_id, old_status, new_status, created_at
+FROM status_history
+WHERE task_id = $1
+ORDER BY created_at ASC
+`
+
+type ListStatusHistoryRow struct {
+	TaskID    pgtype.UUID
+	OldStatus *string
+	NewStatus string
+	CreatedAt time.Time
+}
+
+func (q *Queries) ListStatusHistory(ctx context.Context, taskID pgtype.UUID) ([]ListStatusHistoryRow, error) {
+	rows, err := q.db.Query(ctx, listStatusHistory, taskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListStatusHistoryRow{}
+	for rows.Next() {
+		var i ListStatusHistoryRow
+		if err := rows.Scan(
+			&i.TaskID,
+			&i.OldStatus,
+			&i.NewStatus,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const markTaskCompleted = `-- name: MarkTaskCompleted :exec
+UPDATE processing_tasks SET status = 'completed', updated_at = now() WHERE id = $1
+`
+
+func (q *Queries) MarkTaskCompleted(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, markTaskCompleted, id)
+	return err
+}
+
 const markTaskFailed = `-- name: MarkTaskFailed :exec
 UPDATE processing_tasks
-SET status = 'failed',
-    error_message = $2,
-    updated_at = now()
+SET status = 'failed', error_message = $2, updated_at = now()
 WHERE id = $1
 `
 
@@ -89,4 +207,60 @@ type MarkTaskFailedParams struct {
 func (q *Queries) MarkTaskFailed(ctx context.Context, arg MarkTaskFailedParams) error {
 	_, err := q.db.Exec(ctx, markTaskFailed, arg.ID, arg.ErrorMessage)
 	return err
+}
+
+const markTaskProcessing = `-- name: MarkTaskProcessing :exec
+UPDATE processing_tasks
+SET status = 'processing', attempts = attempts + 1, updated_at = now()
+WHERE id = $1
+`
+
+func (q *Queries) MarkTaskProcessing(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, markTaskProcessing, id)
+	return err
+}
+
+const markTaskSummarized = `-- name: MarkTaskSummarized :exec
+UPDATE processing_tasks SET status = 'summarized', updated_at = now() WHERE id = $1
+`
+
+func (q *Queries) MarkTaskSummarized(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, markTaskSummarized, id)
+	return err
+}
+
+const markTaskTranscribed = `-- name: MarkTaskTranscribed :exec
+UPDATE processing_tasks SET status = 'transcribed', updated_at = now() WHERE id = $1
+`
+
+func (q *Queries) MarkTaskTranscribed(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, markTaskTranscribed, id)
+	return err
+}
+
+const resetStaleProcessing = `-- name: ResetStaleProcessing :many
+UPDATE processing_tasks
+SET status = 'created', updated_at = now()
+WHERE status = 'processing'
+RETURNING id
+`
+
+func (q *Queries) ResetStaleProcessing(ctx context.Context) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, resetStaleProcessing)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

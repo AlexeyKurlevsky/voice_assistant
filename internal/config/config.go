@@ -1,3 +1,4 @@
+// Package config загружает конфигурацию из .env и переменных окружения.
 package config
 
 import (
@@ -9,38 +10,45 @@ import (
 	"github.com/joho/godotenv"
 )
 
+// Config — все настройки приложения.
 type Config struct {
-	// БД
 	DBDSN          string
 	DBMaxConns     int32
 	MigrateOnStart bool
 
-	// Файлы
 	UploadDir      string
 	MaxUploadBytes int64
 
-	// Обработка
 	WorkerConcurrency int
 	JobQueueCapacity  int
 	ShutdownTimeout   time.Duration
 
-	// Провайдеры (батч 3)
+	SpeechTimeout time.Duration
+	LLMTimeout    time.Duration
+
 	SpeechProvider string
 	LLMProvider    string
 
-	// Логи
+	MockSpeechDelay time.Duration
+	MockLLMDelay    time.Duration
+
 	LogLevel  string
 	LogFormat string
 }
 
+// LoadOptions управляет источниками конфигурации.
+// EnvFile == "" отключает чтение .env (для тестов).
 type LoadOptions struct {
 	EnvFile string
 }
 
+// Load — сахар для типичного случая: .env в текущей директории.
 func Load() (*Config, error) {
 	return LoadWithOptions(LoadOptions{EnvFile: ".env"})
 }
 
+// LoadWithOptions загружает конфиг: defaults → .env → env процесса.
+// Возвращает ошибку при невалидных или отсутствующих обязательных значениях.
 func LoadWithOptions(opts LoadOptions) (*Config, error) {
 	if opts.EnvFile != "" {
 		_ = godotenv.Load(opts.EnvFile)
@@ -55,8 +63,12 @@ func LoadWithOptions(opts LoadOptions) (*Config, error) {
 		WorkerConcurrency: getEnvInt("MS_WORKER_CONCURRENCY", 3),
 		JobQueueCapacity:  getEnvInt("MS_JOB_QUEUE_CAPACITY", 100),
 		ShutdownTimeout:   getEnvDuration("MS_SHUTDOWN_TIMEOUT", 10*time.Second),
+		SpeechTimeout:     getEnvDuration("MS_SPEECH_TIMEOUT", 120*time.Second),
+		LLMTimeout:        getEnvDuration("MS_LLM_TIMEOUT", 60*time.Second),
 		SpeechProvider:    getEnv("MS_SPEECH_PROVIDER", "mock"),
 		LLMProvider:       getEnv("MS_LLM_PROVIDER", "mock"),
+		MockSpeechDelay:   getEnvDuration("MS_MOCK_SPEECH_DELAY", 2*time.Second),
+		MockLLMDelay:      getEnvDuration("MS_MOCK_LLM_DELAY", 1*time.Second),
 		LogLevel:          getEnv("MS_LOG_LEVEL", "info"),
 		LogFormat:         getEnv("MS_LOG_FORMAT", "text"),
 	}
@@ -75,6 +87,19 @@ func LoadWithOptions(opts LoadOptions) (*Config, error) {
 	}
 	if c.MaxUploadBytes <= 0 {
 		return nil, fmt.Errorf("config: MS_MAX_UPLOAD_BYTES must be > 0")
+	}
+	if c.SpeechTimeout <= 0 || c.LLMTimeout <= 0 {
+		return nil, fmt.Errorf("config: MS_SPEECH_TIMEOUT and MS_LLM_TIMEOUT must be > 0")
+	}
+	switch c.SpeechProvider {
+	case "mock", "whisper":
+	default:
+		return nil, fmt.Errorf("config: unknown MS_SPEECH_PROVIDER=%q", c.SpeechProvider)
+	}
+	switch c.LLMProvider {
+	case "mock", "openrouter":
+	default:
+		return nil, fmt.Errorf("config: unknown MS_LLM_PROVIDER=%q", c.LLMProvider)
 	}
 	return c, nil
 }

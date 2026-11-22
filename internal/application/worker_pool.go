@@ -12,8 +12,16 @@ import (
 	"github.com/AlexeyKurlevsky/voice_assistant/internal/domain"
 )
 
+// TaskProcessor — обработчик одной задачи.
+//
+// Возвращённая ошибка идёт только в лог: MarkFailed вызывает сам
+// processor (только он знает контекст ошибки).
 type TaskProcessor func(ctx context.Context, taskID uuid.UUID) error
 
+// WorkerPool — bounded pool: n воркеров, очередь capacity.
+//
+// Enqueue неблокирующий (ErrQueueFull при переполнении). Stop идемпотентен.
+// Подробнее — docs/ARCHITECTURE.md §6.
 type WorkerPool struct {
 	n       int
 	jobs    chan uuid.UUID
@@ -26,6 +34,8 @@ type WorkerPool struct {
 	stopped  atomic.Bool
 }
 
+// NewWorkerPool: n — параллелизм (config.WorkerConcurrency),
+// capacity — ёмкость очереди (config.JobQueueCapacity).
 func NewWorkerPool(n, capacity int, process TaskProcessor, log *slog.Logger) *WorkerPool {
 	return &WorkerPool{
 		n:       n,
@@ -35,6 +45,8 @@ func NewWorkerPool(n, capacity int, process TaskProcessor, log *slog.Logger) *Wo
 	}
 }
 
+// Start запускает n воркеров с контекстом, производным от parent.
+// Отмена parent (например, signal.NotifyContext) останавливает их.
 func (p *WorkerPool) Start(parent context.Context) {
 	ctx, cancel := context.WithCancel(parent)
 	p.cancel = cancel
@@ -44,6 +56,8 @@ func (p *WorkerPool) Start(parent context.Context) {
 	}
 }
 
+// Enqueue неблокирующий. Возвращает ctx.Err(), если ctx отменён,
+// или domain.ErrQueueFull, если пул остановлен / канал полон.
 func (p *WorkerPool) Enqueue(ctx context.Context, taskID uuid.UUID) error {
 	select {
 	case <-ctx.Done():
@@ -61,6 +75,8 @@ func (p *WorkerPool) Enqueue(ctx context.Context, taskID uuid.UUID) error {
 	}
 }
 
+// Stop: stopped=true → cancel ctx → close(jobs) → wg.Wait в пределах ctx.
+// Идемпотентен (stopOnce). Ошибка, если ctx истёк до завершения воркеров.
 func (p *WorkerPool) Stop(ctx context.Context) error {
 	p.stopOnce.Do(func() {
 		p.stopped.Store(true)
@@ -84,6 +100,8 @@ func (p *WorkerPool) Stop(ctx context.Context) error {
 	}
 }
 
+// worker — цикл одной горутины. Ошибки process логируются и не
+// прерывают воркер: одна плохая задача не блокирует остальные.
 func (p *WorkerPool) worker(ctx context.Context) {
 	defer p.wg.Done()
 	for {

@@ -15,12 +15,16 @@ import (
 	"github.com/AlexeyKurlevsky/voice_assistant/internal/domain"
 )
 
+// allowedExt — допустимые расширения. Аудио для реального Speech,
+// .txt/.json — для mock (транскрипция берётся из содержимого).
 var allowedExt = map[string]bool{
 	".mp3": true, ".wav": true, ".m4a": true,
 	".ogg": true, ".flac": true,
 	".txt": true, ".json": true,
 }
 
+// MeetingService — загрузка и список разговоров.
+// Обработки здесь нет. Она живет в worker/processor.
 type MeetingService struct {
 	meetingRepo MeetingRepo
 	taskRepo    TaskRepo
@@ -48,6 +52,11 @@ func NewMeetingService(
 	}
 }
 
+// Load: валидация → копия файла → TX создания meeting+task (T1) → Enqueue.
+//
+// При ErrQueueFull задача помечается failed (с отдельным контекстом,
+// чтобы пережить уже отменённый ctx). Скопированный файл не удаляется —
+// для аудита.
 func (s *MeetingService) Load(ctx context.Context, userID uuid.UUID, srcPath string) (*domain.Meeting, *domain.Task, error) {
 	info, err := os.Stat(srcPath)
 	if err != nil {
@@ -72,6 +81,8 @@ func (s *MeetingService) Load(ctx context.Context, userID uuid.UUID, srcPath str
 		return nil, nil, fmt.Errorf("meeting_service.Load: mkdir upload: %w", err)
 	}
 
+	// Имя в uploadDir — UUID: нет коллизий между пользователями,
+	// нет спецсимволов из имени исходного файла.
 	relPath := uuid.NewString() + ext
 	dstPath := filepath.Join(s.uploadDir, relPath)
 	if err := copyFile(srcPath, dstPath); err != nil {
@@ -87,11 +98,13 @@ func (s *MeetingService) Load(ctx context.Context, userID uuid.UUID, srcPath str
 	}
 	task, err := s.meetingRepo.CreateWithTask(ctx, m)
 	if err != nil {
-		_ = os.Remove(dstPath)
+		_ = os.Remove(dstPath) // записи в БД нет — файл «осиротел»
 		return nil, nil, fmt.Errorf("meeting_service.Load: create: %w", err)
 	}
 
 	if err := s.enqueuer.Enqueue(ctx, task.ID); err != nil {
+		// Отдельный контекст: если ctx уже отменён (shutdown),
+		// MarkFailed всё равно должен пройти.
 		failCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 		if ferr := s.taskRepo.MarkFailed(failCtx, task.ID, "queue full"); ferr != nil {
@@ -104,6 +117,8 @@ func (s *MeetingService) Load(ctx context.Context, userID uuid.UUID, srcPath str
 	return m, task, nil
 }
 
+// List с нормализацией limit (≤0 или >500 → 50) и offset (<0 → 0).
+// Репозиторий получает уже валидные значения.
 func (s *MeetingService) List(ctx context.Context, userID uuid.UUID, limit, offset int) ([]domain.MeetingListItem, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 50
@@ -118,6 +133,8 @@ func (s *MeetingService) List(ctx context.Context, userID uuid.UUID, limit, offs
 	return items, nil
 }
 
+// copyFile — потоковое копирование + fsync, чтобы файл был на диске
+// к моменту возврата из Load.
 func copyFile(src, dst string) error {
 	in, err := os.Open(src)
 	if err != nil {

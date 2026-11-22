@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// newListCmd — команда list: список встреч с --limit/--offset.
 func newListCmd(deps *Deps, userID *string, jsonOut *bool) *cobra.Command {
 	var limit, offset int
 

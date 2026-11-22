@@ -1,3 +1,5 @@
+// Package postgres содержит пул соединений pgx, запуск миграций и
+// сгенерированный sqlc код. Репозитории — в подпакете repo.
 package postgres
 
 import (
@@ -17,7 +19,8 @@ import (
 //go:embed migrations/*.sql
 var migrationsFS embed.FS
 
-// NewPool создаёт пул соединений pgx с заданным лимитом.
+// NewPool создаёт pgxpool и проверяет соединение Ping'ом.
+// maxConns — верхняя граница числа соединений (MS_DB_MAX_CONNS).
 func NewPool(ctx context.Context, dsn string, maxConns int32) (*pgxpool.Pool, error) {
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
@@ -38,8 +41,10 @@ func NewPool(ctx context.Context, dsn string, maxConns int32) (*pgxpool.Pool, er
 }
 
 // Migrate применяет миграции из embed.FS к указанной БД.
-// Использует database/sql + stdlib-адаптер pgx, чтобы не завязываться
-// на версию драйвера golang-migrate.
+//
+// Использует database/sql + stdlib-адаптер pgx — этого требует
+// golang-migrate. Migrate безопасен при отсутствии изменений
+// (ErrNoChange не возвращается наружу).
 func Migrate(ctx context.Context, dsn string) error {
 	src, err := iofs.New(migrationsFS, "migrations")
 	if err != nil {

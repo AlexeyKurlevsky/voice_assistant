@@ -7,6 +7,8 @@ import (
 	"github.com/AlexeyKurlevsky/voice_assistant/internal/domain"
 )
 
+// UserService — сценарии пользователей. Регистрация ленивая:
+// первый вызов любой команды делает EnsureExists.
 type UserService struct {
 	repo UserRepo
 }
@@ -15,8 +17,8 @@ func NewUserService(repo UserRepo) *UserService {
 	return &UserService{repo: repo}
 }
 
-// EnsureExists идемпотентно возвращает пользователя по external_id.
-// Создаёт при первом обращении. Валидирует формат external_id.
+// EnsureExists валидирует external_id и возвращает/создаёт пользователя.
+// Идемпотентен. ErrInvalidArgument при невалидном external_id.
 func (s *UserService) EnsureExists(ctx context.Context, externalID string) (*domain.User, error) {
 	if err := validateExternalID(externalID); err != nil {
 		return nil, err
@@ -28,6 +30,8 @@ func (s *UserService) EnsureExists(ctx context.Context, externalID string) (*dom
 	return u, nil
 }
 
+// validateExternalID — [a-zA-Z0-9_.-]{1,64}. Правило CLI-уровня,
+// поэтому здесь, а не в domain.
 func validateExternalID(id string) error {
 	if id == "" {
 		return fmt.Errorf("%w: external_id is empty", domain.ErrInvalidArgument)

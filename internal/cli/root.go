@@ -1,3 +1,5 @@
+// Package cli — презентационный слой: cobra-команды, парсинг аргументов,
+// форматирование вывода. Бизнес-логика — в application.
 package cli
 
 import (
@@ -6,11 +8,14 @@ import (
 	"github.com/AlexeyKurlevsky/voice_assistant/internal/application"
 )
 
+// Deps — зависимости CLI-команд (сервисы из application).
 type Deps struct {
 	UserService    *application.UserService
 	MeetingService *application.MeetingService
 }
 
+// NewRoot собирает корневую команду и все подкоманды.
+// Общие флаги: --user (обязательный), --json.
 func NewRoot(deps *Deps) *cobra.Command {
 	var (
 		userID  string

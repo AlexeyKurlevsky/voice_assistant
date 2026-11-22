@@ -1,3 +1,4 @@
+// Package logger создаёт slog.Logger по настройкам Config.
 package logger
 
 import (
@@ -8,8 +9,8 @@ import (
 	"github.com/AlexeyKurlevsky/voice_assistant/internal/config"
 )
 
-// New создаёт slog.Logger по настройкам из Config.
-// Уровень и формат вывода — из конфига; вывод — в stdout.
+// New создаёт slog.Logger с уровнем LogLevel и форматом LogFormat
+// (json или text). Вывод — в stdout.
 func New(cfg *config.Config) *slog.Logger {
 	var level slog.Level
 	switch strings.ToLower(cfg.LogLevel) {

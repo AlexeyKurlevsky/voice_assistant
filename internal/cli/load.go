@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// newLoadCmd — команда load <path>: загрузка файла и постановка в очередь.
 func newLoadCmd(deps *Deps, userID *string, jsonOut *bool) *cobra.Command {
 	return &cobra.Command{
 		Use:   "load <path>",
