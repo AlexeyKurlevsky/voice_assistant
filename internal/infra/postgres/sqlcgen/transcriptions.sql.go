@@ -33,6 +33,7 @@ func (q *Queries) GetTranscriptForUser(ctx context.Context, arg GetTranscriptFor
 const insertTranscription = `-- name: InsertTranscription :exec
 INSERT INTO transcriptions (meeting_id, text)
 VALUES ($1, $2)
+ON CONFLICT (meeting_id) DO NOTHING
 `
 
 type InsertTranscriptionParams struct {

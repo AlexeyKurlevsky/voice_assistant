@@ -1,6 +1,7 @@
 -- name: InsertSummary :exec
 INSERT INTO summaries (meeting_id, text)
-VALUES ($1, $2);
+VALUES ($1, $2)
+ON CONFLICT (meeting_id) DO NOTHING;
 
 -- name: GetSummaryForUser :one
 SELECT s.text

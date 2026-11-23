@@ -14,24 +14,30 @@ FROM processing_tasks t
 JOIN meetings m ON m.id = t.meeting_id
 WHERE t.meeting_id = $1 AND m.user_id = $2;
 
--- name: MarkTaskProcessing :exec
+-- name: MarkTaskProcessing :execrows
 UPDATE processing_tasks
 SET status = 'processing', attempts = attempts + 1, updated_at = now()
-WHERE id = $1;
+WHERE id = $1 AND status = 'created';
 
--- name: MarkTaskTranscribed :exec
-UPDATE processing_tasks SET status = 'transcribed', updated_at = now() WHERE id = $1;
+-- name: MarkTaskTranscribed :execrows
+UPDATE processing_tasks
+SET status = 'transcribed', updated_at = now()
+WHERE id = $1 AND status = 'processing';
 
--- name: MarkTaskSummarized :exec
-UPDATE processing_tasks SET status = 'summarized', updated_at = now() WHERE id = $1;
+-- name: MarkTaskSummarized :execrows
+UPDATE processing_tasks
+SET status = 'summarized', updated_at = now()
+WHERE id = $1 AND status = 'transcribed';
 
--- name: MarkTaskCompleted :exec
-UPDATE processing_tasks SET status = 'completed', updated_at = now() WHERE id = $1;
+-- name: MarkTaskCompleted :execrows
+UPDATE processing_tasks
+SET status = 'completed', updated_at = now()
+WHERE id = $1 AND status = 'summarized';
 
--- name: MarkTaskFailed :exec
+-- name: MarkTaskFailed :execrows
 UPDATE processing_tasks
 SET status = 'failed', error_message = $2, updated_at = now()
-WHERE id = $1;
+WHERE id = $1 AND status NOT IN ('completed', 'failed');
 
 -- name: InsertStatusHistory :exec
 INSERT INTO status_history (task_id, status)
@@ -50,4 +56,5 @@ WHERE status = 'processing'
 RETURNING id;
 
 -- name: ListPendingTasks :many
-SELECT id FROM processing_tasks WHERE status IN ('created', 'transcribed', 'summarized');
+SELECT id FROM processing_tasks
+WHERE status IN ('created', 'transcribed', 'summarized');

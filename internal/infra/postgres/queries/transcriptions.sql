@@ -1,6 +1,7 @@
 -- name: InsertTranscription :exec
 INSERT INTO transcriptions (meeting_id, text)
-VALUES ($1, $2);
+VALUES ($1, $2)
+ON CONFLICT (meeting_id) DO NOTHING;
 
 -- name: GetTranscriptForUser :one
 SELECT tr.text

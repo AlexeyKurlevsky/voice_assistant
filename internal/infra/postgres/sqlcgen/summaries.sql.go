@@ -33,6 +33,7 @@ func (q *Queries) GetSummaryForUser(ctx context.Context, arg GetSummaryForUserPa
 const insertSummary = `-- name: InsertSummary :exec
 INSERT INTO summaries (meeting_id, text)
 VALUES ($1, $2)
+ON CONFLICT (meeting_id) DO NOTHING
 `
 
 type InsertSummaryParams struct {

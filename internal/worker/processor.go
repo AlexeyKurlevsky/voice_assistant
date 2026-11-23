@@ -69,12 +69,17 @@ func process(
 		return nil
 	}
 
+	meeting, err := meetingRepo.GetByTaskID(ctx, taskID)
+	if err != nil {
+		return fail(ctx, taskRepo, taskID, fmt.Errorf("get meeting: %w", err), log)
+	}
+
 	// Recovery: summarized → completed без повторного вызова LLM.
 	if task.Status == domain.StatusSummarized {
 		if err := taskRepo.MarkCompleted(ctx, taskID); err != nil {
 			return fmt.Errorf("worker: mark completed (recovery): %w", err)
 		}
-		log.Info("worker: task finalized (recovery)", "task_id", taskID)
+		log.Info("worker: task finalized (recovery)", "task_id", taskID, "meeting_id", meeting.ID)
 		return nil
 	}
 
@@ -86,7 +91,6 @@ func process(
 		task.Status = domain.StatusProcessing
 	}
 
-	meeting, err := meetingRepo.GetByTaskID(ctx, taskID)
 	if err != nil {
 		return fail(ctx, taskRepo, taskID, fmt.Errorf("get meeting: %w", err), log)
 	}
@@ -135,7 +139,7 @@ func process(
 		return fmt.Errorf("worker: mark completed: %w", err)
 	}
 
-	log.Info("worker: task completed", "task_id", taskID)
+	log.Info("worker: task completed", "task_id", taskID, "meeting_id", meeting.ID)
 	return nil
 }
 

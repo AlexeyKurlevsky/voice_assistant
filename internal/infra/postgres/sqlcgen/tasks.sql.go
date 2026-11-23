@@ -110,7 +110,8 @@ func (q *Queries) InsertStatusHistory(ctx context.Context, arg InsertStatusHisto
 }
 
 const listPendingTasks = `-- name: ListPendingTasks :many
-SELECT id FROM processing_tasks WHERE status IN ('created', 'transcribed', 'summarized')
+SELECT id FROM processing_tasks
+WHERE status IN ('created', 'transcribed', 'summarized')
 `
 
 func (q *Queries) ListPendingTasks(ctx context.Context) ([]pgtype.UUID, error) {
@@ -165,19 +166,24 @@ func (q *Queries) ListStatusHistory(ctx context.Context, taskID pgtype.UUID) ([]
 	return items, nil
 }
 
-const markTaskCompleted = `-- name: MarkTaskCompleted :exec
-UPDATE processing_tasks SET status = 'completed', updated_at = now() WHERE id = $1
+const markTaskCompleted = `-- name: MarkTaskCompleted :execrows
+UPDATE processing_tasks
+SET status = 'completed', updated_at = now()
+WHERE id = $1 AND status = 'summarized'
 `
 
-func (q *Queries) MarkTaskCompleted(ctx context.Context, id pgtype.UUID) error {
-	_, err := q.db.Exec(ctx, markTaskCompleted, id)
-	return err
+func (q *Queries) MarkTaskCompleted(ctx context.Context, id pgtype.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, markTaskCompleted, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
-const markTaskFailed = `-- name: MarkTaskFailed :exec
+const markTaskFailed = `-- name: MarkTaskFailed :execrows
 UPDATE processing_tasks
 SET status = 'failed', error_message = $2, updated_at = now()
-WHERE id = $1
+WHERE id = $1 AND status NOT IN ('completed', 'failed')
 `
 
 type MarkTaskFailedParams struct {
@@ -185,38 +191,54 @@ type MarkTaskFailedParams struct {
 	ErrorMessage *string
 }
 
-func (q *Queries) MarkTaskFailed(ctx context.Context, arg MarkTaskFailedParams) error {
-	_, err := q.db.Exec(ctx, markTaskFailed, arg.ID, arg.ErrorMessage)
-	return err
+func (q *Queries) MarkTaskFailed(ctx context.Context, arg MarkTaskFailedParams) (int64, error) {
+	result, err := q.db.Exec(ctx, markTaskFailed, arg.ID, arg.ErrorMessage)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
-const markTaskProcessing = `-- name: MarkTaskProcessing :exec
+const markTaskProcessing = `-- name: MarkTaskProcessing :execrows
 UPDATE processing_tasks
 SET status = 'processing', attempts = attempts + 1, updated_at = now()
-WHERE id = $1
+WHERE id = $1 AND status = 'created'
 `
 
-func (q *Queries) MarkTaskProcessing(ctx context.Context, id pgtype.UUID) error {
-	_, err := q.db.Exec(ctx, markTaskProcessing, id)
-	return err
+func (q *Queries) MarkTaskProcessing(ctx context.Context, id pgtype.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, markTaskProcessing, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
-const markTaskSummarized = `-- name: MarkTaskSummarized :exec
-UPDATE processing_tasks SET status = 'summarized', updated_at = now() WHERE id = $1
+const markTaskSummarized = `-- name: MarkTaskSummarized :execrows
+UPDATE processing_tasks
+SET status = 'summarized', updated_at = now()
+WHERE id = $1 AND status = 'transcribed'
 `
 
-func (q *Queries) MarkTaskSummarized(ctx context.Context, id pgtype.UUID) error {
-	_, err := q.db.Exec(ctx, markTaskSummarized, id)
-	return err
+func (q *Queries) MarkTaskSummarized(ctx context.Context, id pgtype.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, markTaskSummarized, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
-const markTaskTranscribed = `-- name: MarkTaskTranscribed :exec
-UPDATE processing_tasks SET status = 'transcribed', updated_at = now() WHERE id = $1
+const markTaskTranscribed = `-- name: MarkTaskTranscribed :execrows
+UPDATE processing_tasks
+SET status = 'transcribed', updated_at = now()
+WHERE id = $1 AND status = 'processing'
 `
 
-func (q *Queries) MarkTaskTranscribed(ctx context.Context, id pgtype.UUID) error {
-	_, err := q.db.Exec(ctx, markTaskTranscribed, id)
-	return err
+func (q *Queries) MarkTaskTranscribed(ctx context.Context, id pgtype.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, markTaskTranscribed, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const resetStaleProcessing = `-- name: ResetStaleProcessing :many

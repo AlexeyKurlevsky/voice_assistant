@@ -20,6 +20,7 @@ import (
 	"github.com/AlexeyKurlevsky/voice_assistant/internal/infra/speech"
 	"github.com/AlexeyKurlevsky/voice_assistant/internal/logger"
 	"github.com/AlexeyKurlevsky/voice_assistant/internal/worker"
+	"github.com/google/uuid"
 )
 
 func main() {
@@ -129,16 +130,27 @@ func run(cfg *config.Config, log *slog.Logger) int {
 
 // recoverTasks сбрасывает «зависшие» processing → created и ставит в очередь
 // все незавершённые задачи (created/transcribed/summarized).
-func recoverTasks(ctx context.Context, taskRepo application.TaskRepo, wp *application.WorkerPool, log *slog.Logger) {
+// Дедупликация обязательна: ResetStaleProcessing переводит задачи в created,
+// и ListPendingTasks сразу же их возвращает — без дедупликации задача
+// попадает в очередь дважды, и два воркера берут её параллельно.
+func recoverTasks(ctx context.Context, taskRepo application.TaskRepo, wp *application.WorkerPool, log *slog.Logger) int {
+	seen := make(map[uuid.UUID]bool)
+	total := 0
+
 	stale, err := taskRepo.ResetStaleProcessing(ctx)
 	if err != nil {
 		log.Warn("recover: reset stale", "err", err)
 	} else {
 		for _, id := range stale {
+			if seen[id] {
+				continue
+			}
+			seen[id] = true
 			if err := wp.Enqueue(ctx, id); err != nil {
 				log.Warn("recover: enqueue stale", "task_id", id, "err", err)
 			} else {
 				log.Info("recover: requeued stale task", "task_id", id)
+				total++
 			}
 		}
 	}
@@ -146,15 +158,21 @@ func recoverTasks(ctx context.Context, taskRepo application.TaskRepo, wp *applic
 	pending, err := taskRepo.ListPending(ctx)
 	if err != nil {
 		log.Warn("recover: list pending", "err", err)
-		return
+		return total
 	}
 	for _, id := range pending {
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
 		if err := wp.Enqueue(ctx, id); err != nil {
 			log.Warn("recover: enqueue pending", "task_id", id, "err", err)
 		} else {
 			log.Info("recover: requeued pending task", "task_id", id)
+			total++
 		}
 	}
+	return total
 }
 
 // exitCodeFor мапит доменные ошибки в коды возврата (docs/COMMANDS.md §2).

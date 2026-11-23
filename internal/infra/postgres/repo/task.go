@@ -24,10 +24,11 @@ func NewTaskRepo(pool *pgxpool.Pool) *TaskRepo {
 	return &TaskRepo{pool: pool, q: sqlcgen.New(pool)}
 }
 
-// MarkProcessing — переход created → processing, attempts++.
+// MarkProcessing — переход created → processing.
+// Если задача уже не в created — no-op (не ошибка).
 func (r *TaskRepo) MarkProcessing(ctx context.Context, taskID uuid.UUID) error {
 	return r.transition(ctx, taskID,
-		func(q *sqlcgen.Queries) error {
+		func(q *sqlcgen.Queries) (int64, error) {
 			return q.MarkTaskProcessing(ctx, toPgUUID(taskID))
 		},
 		domain.StatusProcessing,
@@ -35,16 +36,19 @@ func (r *TaskRepo) MarkProcessing(ctx context.Context, taskID uuid.UUID) error {
 }
 
 // MarkCompleted — переход summarized → completed.
+// Если задача уже не в summarized — no-op.
 func (r *TaskRepo) MarkCompleted(ctx context.Context, taskID uuid.UUID) error {
 	return r.transition(ctx, taskID,
-		func(q *sqlcgen.Queries) error {
+		func(q *sqlcgen.Queries) (int64, error) {
 			return q.MarkTaskCompleted(ctx, toPgUUID(taskID))
 		},
 		domain.StatusCompleted,
 	)
 }
 
-// MarkFailed — перевод в failed с error_message.
+// MarkFailed — перевод в failed. Не трогает терминальные статусы:
+// если задача уже completed или failed, UPDATE не сработает,
+// и completed → failed (гонка двух воркеров) невозможна.
 func (r *TaskRepo) MarkFailed(ctx context.Context, taskID uuid.UUID, errMsg string) error {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
@@ -54,11 +58,19 @@ func (r *TaskRepo) MarkFailed(ctx context.Context, taskID uuid.UUID, errMsg stri
 
 	qtx := r.q.WithTx(tx)
 
-	if err := qtx.MarkTaskFailed(ctx, sqlcgen.MarkTaskFailedParams{
+	rows, err := qtx.MarkTaskFailed(ctx, sqlcgen.MarkTaskFailedParams{
 		ID:           toPgUUID(taskID),
 		ErrorMessage: &errMsg,
-	}); err != nil {
+	})
+	if err != nil {
 		return fmt.Errorf("task_repo.MarkFailed: update: %w", err)
+	}
+	if rows == 0 {
+		// Задача уже терминальная — не перезаписываем.
+		if err := tx.Commit(ctx); err != nil {
+			return fmt.Errorf("task_repo.MarkFailed: commit no-op: %w", err)
+		}
+		return nil
 	}
 
 	if err := qtx.InsertStatusHistory(ctx, sqlcgen.InsertStatusHistoryParams{
@@ -74,11 +86,13 @@ func (r *TaskRepo) MarkFailed(ctx context.Context, taskID uuid.UUID, errMsg stri
 	return nil
 }
 
-// transition — общий путь для «UPDATE status + INSERT history» переходов.
+// transition — общий путь для «UPDATE status + INSERT history».
+// Если UPDATE не затронул ни одной строки (задача уже в другом статусе),
+// история не пишется — это no-op, не ошибка.
 func (r *TaskRepo) transition(
 	ctx context.Context,
 	taskID uuid.UUID,
-	doUpdate func(q *sqlcgen.Queries) error,
+	doUpdate func(q *sqlcgen.Queries) (int64, error),
 	newStatus domain.Status,
 ) error {
 	tx, err := r.pool.Begin(ctx)
@@ -89,8 +103,15 @@ func (r *TaskRepo) transition(
 
 	qtx := r.q.WithTx(tx)
 
-	if err := doUpdate(qtx); err != nil {
+	rows, err := doUpdate(qtx)
+	if err != nil {
 		return fmt.Errorf("task_repo.transition: update: %w", err)
+	}
+	if rows == 0 {
+		if err := tx.Commit(ctx); err != nil {
+			return fmt.Errorf("task_repo.transition: commit no-op: %w", err)
+		}
+		return nil
 	}
 
 	if err := qtx.InsertStatusHistory(ctx, sqlcgen.InsertStatusHistoryParams{
@@ -106,7 +127,10 @@ func (r *TaskRepo) transition(
 	return nil
 }
 
-// SaveTranscriptionAndMarkTranscribed: INSERT transcriptions + UPDATE status + history.
+// SaveTranscriptionAndMarkTranscribed: INSERT transcriptions +
+// UPDATE status processing → transcribed + history.
+// Идемпотентен: повторный INSERT — no-op (ON CONFLICT DO NOTHING),
+// повторный UPDATE — 0 строк, история не пишется.
 func (r *TaskRepo) SaveTranscriptionAndMarkTranscribed(ctx context.Context, taskID uuid.UUID, text string) error {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
@@ -131,8 +155,15 @@ func (r *TaskRepo) SaveTranscriptionAndMarkTranscribed(ctx context.Context, task
 		return fmt.Errorf("task_repo.SaveTranscription: insert: %w", err)
 	}
 
-	if err := qtx.MarkTaskTranscribed(ctx, toPgUUID(taskID)); err != nil {
+	rows, err := qtx.MarkTaskTranscribed(ctx, toPgUUID(taskID))
+	if err != nil {
 		return fmt.Errorf("task_repo.SaveTranscription: update status: %w", err)
+	}
+	if rows == 0 {
+		if err := tx.Commit(ctx); err != nil {
+			return fmt.Errorf("task_repo.SaveTranscription: commit no-op: %w", err)
+		}
+		return nil
 	}
 
 	if err := qtx.InsertStatusHistory(ctx, sqlcgen.InsertStatusHistoryParams{
@@ -148,7 +179,9 @@ func (r *TaskRepo) SaveTranscriptionAndMarkTranscribed(ctx context.Context, task
 	return nil
 }
 
-// SaveSummaryAndMarkSummarized: INSERT summaries + UPDATE status + history.
+// SaveSummaryAndMarkSummarized: INSERT summaries +
+// UPDATE status transcribed → summarized + history.
+// Идемпотентен аналогично SaveTranscription.
 func (r *TaskRepo) SaveSummaryAndMarkSummarized(ctx context.Context, taskID uuid.UUID, text string) error {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
@@ -173,8 +206,15 @@ func (r *TaskRepo) SaveSummaryAndMarkSummarized(ctx context.Context, taskID uuid
 		return fmt.Errorf("task_repo.SaveSummary: insert: %w", err)
 	}
 
-	if err := qtx.MarkTaskSummarized(ctx, toPgUUID(taskID)); err != nil {
+	rows, err := qtx.MarkTaskSummarized(ctx, toPgUUID(taskID))
+	if err != nil {
 		return fmt.Errorf("task_repo.SaveSummary: update status: %w", err)
+	}
+	if rows == 0 {
+		if err := tx.Commit(ctx); err != nil {
+			return fmt.Errorf("task_repo.SaveSummary: commit no-op: %w", err)
+		}
+		return nil
 	}
 
 	if err := qtx.InsertStatusHistory(ctx, sqlcgen.InsertStatusHistoryParams{
