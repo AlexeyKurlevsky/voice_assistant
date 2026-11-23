@@ -9,27 +9,27 @@
 
 ```
                   ┌──────────────┐
-                  │   created    │  (встреча + задача созданы в одной TX)
+                  │   created    │  (встреча + задача созданы в одной транзакции)
                   └──────┬───────┘
                          │ MarkProcessing
                   ┌──────▼───────┐
                   │  processing  │  (воркер взял задачу)
                   └──────┬───────┘
-                         │ SaveTranscriptionAndMarkTranscribed (TX)
+                         │ SaveTranscriptionAndMarkTranscribed (транзакция)
                   ┌──────▼───────┐
                   │ transcribed  │  (транскрипция в БД)
                   └──────┬───────┘
-                         │ SaveSummaryAndMarkSummarized (TX)
+                         │ SaveSummaryAndMarkSummarized (транзакция)
                   ┌──────▼───────┐
                   │ summarized   │  (выжимка в БД)
                   └──────┬───────┘
-                         │ MarkCompleted (TX)
+                         │ MarkCompleted (транзакция)
                   ┌──────▼───────┐
                   │  completed   │  (всё консистентно, готово к чтению)
                   └──────────────┘
 
   из processing / transcribed / summarized при ошибке:
-                         │ MarkFailed (TX)
+                         │ MarkFailed (транзакция)
                   ┌──────▼───────┐
                   │    failed    │  (error_message заполнен)
                   └──────────────┘
@@ -58,15 +58,16 @@
 
 ## 3. Гарантии переходов
 
-Каждый переход сопровождается записью в `status_history`.
+Каждый переход сопровождается записью в `status_history` (столбец `status` —
+новый статус; предыдущий восстанавливается по соседней записи).
 
 | Переход | Транзакция | Атомарные операции |
 |---|---|---|
-| `created → processing` | **TX** | `UPDATE processing_tasks SET status='processing', attempts=attempts+1, updated_at=now()` + `INSERT status_history` |
-| `processing → transcribed` | **TX** | `INSERT transcriptions` + `UPDATE processing_tasks SET status='transcribed'` + `INSERT status_history` |
-| `transcribed → summarized` | **TX** | `INSERT summaries` + `UPDATE processing_tasks SET status='summarized'` + `INSERT status_history` |
-| `summarized → completed` | **TX** | `UPDATE processing_tasks SET status='completed'` + `INSERT status_history` |
-| `* → failed` | **TX** | `UPDATE processing_tasks SET status='failed', error_message=$1` + `INSERT status_history` |
+| `created → processing` | **да** | `UPDATE processing_tasks SET status='processing', attempts=attempts+1, updated_at=now()` + `INSERT status_history(status='processing')` |
+| `processing → transcribed` | **да** | `INSERT transcriptions` + `UPDATE processing_tasks SET status='transcribed'` + `INSERT status_history(status='transcribed')` |
+| `transcribed → summarized` | **да** | `INSERT summaries` + `UPDATE processing_tasks SET status='summarized'` + `INSERT status_history(status='summarized')` |
+| `summarized → completed` | **да** | `UPDATE processing_tasks SET status='completed'` + `INSERT status_history(status='completed')` |
+| `* → failed` | **да** | `UPDATE processing_tasks SET status='failed', error_message=$1` + `INSERT status_history(status='failed')` |
 
 **Терминальные статусы:** `completed`, `failed`. Из них переходов нет.
 
@@ -79,16 +80,20 @@
 
 ## 4. Восстановление после сбоя
 
-При запуске сервиса:
+При запуске сервиса (только для команды `load` — см. `cmd/voice-assistant/main.go`):
 
 1. `TaskRepo.ResetStaleProcessing(ctx)` — переводит «зависшие» `processing` обратно в `created`,
    возвращает их `meeting_id`.
-2. `TaskRepo.ListPending(ctx)` — добирает `created`, оставшиеся с прошлого запуска.
-3. Оба набора ставятся в очередь через `WorkerPool.Enqueue`.
+2. `TaskRepo.ListPending(ctx)` — добирает задачи в статусах `created`, `transcribed`,
+   `summarized`, оставшиеся с прошлого запуска.
+3. Оба набора ставятся в очередь через `WorkerPool.Enqueue`. Пользователю
+   выводится предупреждение в stderr: `[recovery] восстановлено N задач`.
 
 Задачи в статусе `summarized` при рестарте попадают в очередь наравне с `created`.
 Воркер видит статус `summarized`, пропускает Speech и LLM, выполняет только
 `MarkCompleted`. Повторных вызовов внешних сервисов не происходит.
+Аналогично для `transcribed`: транскрипция читается из БД, LLM вызывается
+заново (только этап выжимки).
 
 ---
 
@@ -96,7 +101,7 @@
 
 ```json
 {
-  "meeting_id": 3,
+  "meeting_id": "3a2b...",
   "status": "failed",
   "created_at": "2026-11-19T10:15:02Z",
   "updated_at": "2026-11-19T10:15:09Z",
@@ -108,6 +113,20 @@
 - `created_at` — `processing_tasks.created_at`;
 - `updated_at` — `processing_tasks.updated_at` (обновляется на каждом переходе);
 - `error_message` — заполнен только при `failed`;
-- при `--verbose` дополнительно выводится `status_history`.
+- при `--verbose` дополнительно выводится `status_history` (последовательность
+  записей, отрисованная стрелками: `created -> processing -> ...`);
+- при `--watch` — polling до терминального статуса с обновлением в одной строке
+  (text) или NDJSON (json).
 
 ---
+
+## 6. Соответствие требованиям ТЗ
+
+| Требование | Где выполнено |
+|---|---|
+| Минимальный набор статусов из ТЗ | Все 6 присутствуют |
+| Прослеживаемый жизненный цикл | `status_history` фиксирует каждый переход |
+| Ошибки доступны через `status` | `processing_tasks.error_message` |
+| Терминальные статусы | `completed`, `failed` |
+| Восстановление после сбоя | `ResetStaleProcessing` + `ListPending` на старте `load` |
+| Гарантия консистентности | Каждый переход — в транзакции |

@@ -37,6 +37,8 @@ func NewRoot(deps *Deps) *cobra.Command {
 		newStartCmd(deps, &userID, &jsonOut),
 		newLoadCmd(deps, &userID, &jsonOut),
 		newListCmd(deps, &userID, &jsonOut),
+		newStatusCmd(deps, &userID, &jsonOut),
+		newGetCmd(deps, &userID, &jsonOut),
 	)
 
 	return root

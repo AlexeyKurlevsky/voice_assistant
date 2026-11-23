@@ -27,7 +27,7 @@ type UserRepo interface {
 // Все read-методы с userID фильтруют по m.user_id = $1 в SQL
 // (docs/DATA_MODEL.md §5).
 type MeetingRepo interface {
-	// CreateWithTask — T1: встреча + задача + первая запись history.
+	// CreateWithTask — транзакция 1: встреча + задача + первая запись history.
 	// Побочно заполняет m.ID и m.CreatedAt.
 	CreateWithTask(ctx context.Context, m *domain.Meeting) (*domain.Task, error)
 
@@ -48,14 +48,14 @@ type MeetingRepo interface {
 	GetSummary(ctx context.Context, meetingID, userID uuid.UUID) (string, error)
 }
 
-// TaskRepo — задачи обработки. Все переходы атомарны (T2–T6),
+// TaskRepo — задачи обработки. Все переходы атомарны (транзакция 2–транзакция 6),
 // включают запись в status_history.
 type TaskRepo interface {
-	MarkProcessing(ctx context.Context, taskID uuid.UUID) error                                   // T2
-	SaveTranscriptionAndMarkTranscribed(ctx context.Context, taskID uuid.UUID, text string) error // T3
-	SaveSummaryAndMarkSummarized(ctx context.Context, taskID uuid.UUID, text string) error        // T4
-	MarkCompleted(ctx context.Context, taskID uuid.UUID) error                                    // T5
-	MarkFailed(ctx context.Context, taskID uuid.UUID, errMsg string) error                        // T6
+	MarkProcessing(ctx context.Context, taskID uuid.UUID) error                                   // транзакция 2
+	SaveTranscriptionAndMarkTranscribed(ctx context.Context, taskID uuid.UUID, text string) error // транзакция 3
+	SaveSummaryAndMarkSummarized(ctx context.Context, taskID uuid.UUID, text string) error        // транзакция 4
+	MarkCompleted(ctx context.Context, taskID uuid.UUID) error                                    // транзакция 5
+	MarkFailed(ctx context.Context, taskID uuid.UUID, errMsg string) error                        // транзакция 6
 
 	GetByID(ctx context.Context, taskID uuid.UUID) (*domain.Task, error)
 	GetByMeetingIDForUser(ctx context.Context, meetingID, userID uuid.UUID) (*domain.Task, error)

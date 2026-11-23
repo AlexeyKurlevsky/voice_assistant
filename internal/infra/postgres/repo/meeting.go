@@ -24,8 +24,8 @@ func NewMeetingRepo(pool *pgxpool.Pool) *MeetingRepo {
 	return &MeetingRepo{pool: pool, q: sqlcgen.New(pool)}
 }
 
-// CreateWithTask — T1 (docs/DATA_MODEL.md §4).
-// Атомарно: INSERT meetings + INSERT processing_tasks + INSERT history.
+// CreateWithTask — транзакция 1 (docs/DATA_MODEL.md §4).
+// Атомарно: INSERT meetings + INSERT processing_tasks + INSERT status_history.
 // Побочно заполняет m.ID и m.CreatedAt.
 func (r *MeetingRepo) CreateWithTask(ctx context.Context, m *domain.Meeting) (*domain.Task, error) {
 	tx, err := r.pool.Begin(ctx)
@@ -57,9 +57,8 @@ func (r *MeetingRepo) CreateWithTask(ctx context.Context, m *domain.Meeting) (*d
 	}
 
 	if err := qtx.InsertStatusHistory(ctx, sqlcgen.InsertStatusHistoryParams{
-		TaskID:    tRow.ID,
-		OldStatus: nil, // первая запись: old_status = NULL
-		NewStatus: string(domain.StatusCreated),
+		TaskID: tRow.ID,
+		Status: string(domain.StatusCreated),
 	}); err != nil {
 		return nil, fmt.Errorf("meeting_repo.CreateWithTask: insert history: %w", err)
 	}

@@ -18,21 +18,21 @@ erDiagram
     processing_tasks ||--o{ status_history : "история переходов"
 
     users {
-        bigserial id PK
+        uuid id PK
         text external_id UK
         timestamptz created_at
     }
     meetings {
-        bigserial id PK
-        bigint user_id FK
+        uuid id PK
+        uuid user_id FK
         text title
         text original_filename
         text file_path
         timestamptz created_at
     }
     processing_tasks {
-        bigserial id PK
-        bigint meeting_id FK "UQ"
+        uuid id PK
+        uuid meeting_id FK "UQ"
         text status
         text error_message
         int attempts
@@ -40,28 +40,27 @@ erDiagram
         timestamptz updated_at
     }
     status_history {
-        bigserial id PK
-        bigint task_id FK
-        text old_status
-        text new_status
+        uuid id PK
+        uuid task_id FK
+        text status
         timestamptz created_at
     }
     transcriptions {
-        bigserial id PK
-        bigint meeting_id FK "UQ"
+        uuid id PK
+        uuid meeting_id FK "UQ"
         text text
         timestamptz created_at
     }
     summaries {
-        bigserial id PK
-        bigint meeting_id FK "UQ"
+        uuid id PK
+        uuid meeting_id FK "UQ"
         text text
         timestamptz created_at
     }
     chat_messages {
-        bigserial id PK
-        bigint user_id FK
-        bigint meeting_id FK
+        uuid id PK
+        uuid user_id FK
+        uuid meeting_id FK
         text question
         text answer
         timestamptz created_at
@@ -76,7 +75,7 @@ erDiagram
 
 ```sql
 CREATE TABLE users (
-    id          BIGSERIAL   PRIMARY KEY,
+    id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     external_id TEXT        NOT NULL UNIQUE,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -88,15 +87,15 @@ CREATE TABLE users (
 | `created_at` | Момент регистрации. |
 
 `external_id` — единственный идентификатор, который видит пользователь.
-Внутренние FK используют `id` (BIGINT). Это защищает от «утечки» чужих
+Внутренние FK используют `id` (UUID). Это защищает от «утечки» чужих
 `external_id` через логи и ошибки.
 
 ### 2.2. `meetings`
 
 ```sql
 CREATE TABLE meetings (
-    id                BIGSERIAL   PRIMARY KEY,
-    user_id           BIGINT      NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    id                UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id           UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     title             TEXT        NOT NULL,
     original_filename TEXT        NOT NULL,
     file_path         TEXT        NOT NULL,
@@ -118,8 +117,8 @@ CREATE INDEX idx_meetings_user_created ON meetings (user_id, created_at DESC);
 
 ```sql
 CREATE TABLE processing_tasks (
-    id            BIGSERIAL   PRIMARY KEY,
-    meeting_id    BIGINT      NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+    id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    meeting_id    UUID        NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
     status        TEXT        NOT NULL
                   CHECK (status IN ('created','processing','transcribed',
                                     'summarized','completed','failed')),
@@ -137,7 +136,7 @@ CREATE INDEX idx_tasks_status ON processing_tasks (status);
 | `meeting_id` | `UNIQUE` — одна встреча = одна активная задача. Повторная загрузка создаёт новую встречу. |
 | `status` | Один из шести. `CHECK` — страховка от опечаток в SQL. |
 | `error_message` | Заполнен только при `failed`. `NULL` в остальных статусах. |
-| `attempts` | Инкрементируется при каждом `MarkProcessing`. Для будущей логики ретраев; на текущий момент информативно. |
+| `attempts` | Инкрементируется при каждом переходе `created → processing`. Для будущей логики ретраев; на текущий момент информативно. |
 
 `updated_at` обновляется в каждом `UPDATE` явно (`SET updated_at = now()`)
 — без триггеров, чтобы поведение было видно в коде.
@@ -146,10 +145,9 @@ CREATE INDEX idx_tasks_status ON processing_tasks (status);
 
 ```sql
 CREATE TABLE status_history (
-    id         BIGSERIAL   PRIMARY KEY,
-    task_id    BIGINT      NOT NULL REFERENCES processing_tasks(id) ON DELETE CASCADE,
-    old_status TEXT,
-    new_status TEXT        NOT NULL,
+    id         UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    task_id    UUID        NOT NULL REFERENCES processing_tasks(id) ON DELETE CASCADE,
+    status     TEXT        NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX idx_status_history_task ON status_history (task_id, created_at);
@@ -157,18 +155,25 @@ CREATE INDEX idx_status_history_task ON status_history (task_id, created_at);
 
 | Поле | Назначение |
 |---|---|
-| `old_status` | `NULL` только для самой первой записи (создание задачи). |
-| `new_status` | Целевой статус перехода. |
+| `status` | Статус, в который перешла задача. |
 
-Пишется в **той же транзакции**, что и сам переход. При `ROLLBACK` не остаётся
-«фантомных» записей истории.
+Журнал фиксирует **последовательность статусов**, а не переходы «было → стало».
+Предыдущий статус восстанавливается по соседней записи (в CLI `status --verbose`).
+Такой дизайн:
+
+- не требует дополнительного `SELECT` перед каждым `UPDATE` статуса;
+- исключает рассинхрон `old_status(N) != new_status(N-1)`;
+- при этом полностью сохраняет аудит жизненного цикла.
+
+Пишется в **той же транзакции**, что и сам переход. При откате транзакции
+записи истории не остаётся — «фантомных» переходов не бывает.
 
 ### 2.5. `transcriptions`
 
 ```sql
 CREATE TABLE transcriptions (
-    id         BIGSERIAL   PRIMARY KEY,
-    meeting_id BIGINT      NOT NULL UNIQUE REFERENCES meetings(id) ON DELETE CASCADE,
+    id         UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    meeting_id UUID        NOT NULL UNIQUE REFERENCES meetings(id) ON DELETE CASCADE,
     text       TEXT        NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -183,8 +188,8 @@ CREATE INDEX idx_transcriptions_fts
 
 ```sql
 CREATE TABLE summaries (
-    id         BIGSERIAL   PRIMARY KEY,
-    meeting_id BIGINT      NOT NULL UNIQUE REFERENCES meetings(id) ON DELETE CASCADE,
+    id         UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    meeting_id UUID        NOT NULL UNIQUE REFERENCES meetings(id) ON DELETE CASCADE,
     text       TEXT        NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -196,9 +201,9 @@ CREATE INDEX idx_summaries_fts
 
 ```sql
 CREATE TABLE chat_messages (
-    id         BIGSERIAL   PRIMARY KEY,
-    user_id    BIGINT      NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    meeting_id BIGINT      NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+    id         UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id    UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    meeting_id UUID        NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
     question   TEXT        NOT NULL,
     answer     TEXT        NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -241,23 +246,26 @@ LIMIT $2 OFFSET $3;
 В `application.MeetingRepo.ListByUser` пустая строка превращается в `""`,
 CLI-слой отображает `—`.
 
-### `idx_tasks_status` → `ListPending` / `ResetStaleProcessing`
+### `idx_tasks_status` → `ListPendingTasks` / `ResetStaleProcessing`
 
 ```sql
 -- name: ListPendingTasks :many
-SELECT meeting_id FROM processing_tasks WHERE status = 'created';
+SELECT id FROM processing_tasks
+WHERE status IN ('created', 'transcribed', 'summarized');
 
 -- name: ResetStaleProcessing :many
 UPDATE processing_tasks
 SET status = 'created', updated_at = now()
 WHERE status = 'processing'
-RETURNING meeting_id;
+RETURNING id;
 ```
 
-Оба запроса — Bitmap Index Scan по `idx_tasks_status`. `ResetStaleProcessing`
-использует `UPDATE ... RETURNING` — одна операция и запись истории не нужна
-(это не переход бизнес-статуса, а восстановление после сбоя; в `status_history`
-не пишется, чтобы не путать «ручной перезапуск» с реальным переходом).
+`ListPendingTasks` покрывает три незавершённых статуса: `created` (задача
+ещё не взята), `transcribed` (транскрипция сохранена, но LLM-этап не завершён),
+`summarized` (выжимка сохранена, но нет `completed` — крэш между шагами).
+`ResetStaleProcessing` использует `UPDATE ... RETURNING` — одна операция;
+в `status_history` не пишет, потому что это восстановление после сбоя,
+а не бизнес-переход.
 
 ### `idx_transcriptions_fts` / `idx_summaries_fts` → `SearchMeetings` (команда `find`)
 
@@ -317,19 +325,20 @@ LIMIT 20;
 
 ## 4. Транзакции
 
-Все переходы статусов атомарны. Реализация — в `internal/infra/postgres/repo/*.go` (пакет `repo`):
-→ `tx.Commit` / `defer tx.Rollback(ctx)`. Каждый запрос внутри транзакции
-описан в `queries/tasks.sql` (или `queries/meetings.sql`) и вызывается через
-`sqlcgen.Queries`, привязанный к `tx`.
+Все переходы статусов атомарны. Реализация — в `internal/infra/postgres/repo/*.go`
+(пакет `repo`): `pgxpool.Begin` → `queries.WithTx(tx)` → `tx.Commit` /
+`defer tx.Rollback(ctx)`. Каждый запрос внутри транзакции описан в
+`queries/tasks.sql` (или `queries/meetings.sql`) и вызывается через
+`sqlcgen.Queries`, привязанный к транзакции.
 
-| # | Метод (обёртка) | SQL-функции sqlcgen внутри TX | Атомарные операции |
+| # | Метод (обёртка) | SQL-функции sqlcgen внутри транзакции | Атомарные операции |
 |---|---|---|---|
-| T1 | `MeetingRepo.CreateWithTask` | `CreateMeeting`, `CreateTask`, `InsertStatusHistory` | `INSERT meetings` → `INSERT processing_tasks(status='created')` → `INSERT status_history(new_status='created')` |
-| T2 | `TaskRepo.MarkProcessing` | `MarkTaskProcessing`, `InsertStatusHistory` | `UPDATE processing_tasks SET status='processing', attempts=attempts+1, updated_at=now()` → `INSERT status_history(old='created', new='processing')` |
-| T3 | `TaskRepo.SaveTranscriptionAndMarkTranscribed` | `InsertTranscription`, `MarkTaskTranscribed`, `InsertStatusHistory` | `INSERT transcriptions` → `UPDATE processing_tasks SET status='transcribed', updated_at=now()` → `INSERT status_history` |
-| T4 | `TaskRepo.SaveSummaryAndMarkSummarized` | `InsertSummary`, `MarkTaskSummarized`, `InsertStatusHistory` | `INSERT summaries` → `UPDATE processing_tasks SET status='summarized', updated_at=now()` → `INSERT status_history` |
-| T5 | `TaskRepo.MarkCompleted` | `MarkTaskCompleted`, `InsertStatusHistory` | `UPDATE processing_tasks SET status='completed', updated_at=now()` → `INSERT status_history` |
-| T6 | `TaskRepo.MarkFailed` | `MarkTaskFailed`, `InsertStatusHistory` | `UPDATE processing_tasks SET status='failed', error_message=$1, updated_at=now()` → `INSERT status_history` |
+| 1 | `MeetingRepo.CreateWithTask` | `CreateMeeting`, `CreateTask`, `InsertStatusHistory` | `INSERT meetings` → `INSERT processing_tasks(status='created')` → `INSERT status_history(status='created')` |
+| 2 | `TaskRepo.MarkProcessing` | `MarkTaskProcessing`, `InsertStatusHistory` | `UPDATE processing_tasks SET status='processing', attempts=attempts+1, updated_at=now()` → `INSERT status_history(status='processing')` |
+| 3 | `TaskRepo.SaveTranscriptionAndMarkTranscribed` | `InsertTranscription`, `MarkTaskTranscribed`, `InsertStatusHistory` | `INSERT transcriptions` → `UPDATE processing_tasks SET status='transcribed', updated_at=now()` → `INSERT status_history(status='transcribed')` |
+| 4 | `TaskRepo.SaveSummaryAndMarkSummarized` | `InsertSummary`, `MarkTaskSummarized`, `InsertStatusHistory` | `INSERT summaries` → `UPDATE processing_tasks SET status='summarized', updated_at=now()` → `INSERT status_history(status='summarized')` |
+| 5 | `TaskRepo.MarkCompleted` | `MarkTaskCompleted`, `InsertStatusHistory` | `UPDATE processing_tasks SET status='completed', updated_at=now()` → `INSERT status_history(status='completed')` |
+| 6 | `TaskRepo.MarkFailed` | `MarkTaskFailed`, `InsertStatusHistory` | `UPDATE processing_tasks SET status='failed', error_message=$1, updated_at=now()` → `INSERT status_history(status='failed')` |
 
 **Почему `MarkProcessing` — транзакция.** Формально можно было бы сделать один
 `UPDATE` и не писать историю. Но `attempts` — счётчик, и переход
@@ -364,7 +373,7 @@ LIMIT 20;
 для API, отдающих данные по ID: не подтверждаем существование чужих
 объектов. Зафиксировано в ADR.
 
-**Маппинг ошибок — на обёртке `*_repo.go`.** `sqlcgen` возвращает
+**Маппинг ошибок — на обёртке `repo/*.go`.** `sqlcgen` возвращает
 `pgx.ErrNoRows`; обёртка переводит его в `domain.ErrNotFound`:
 
 ```go
@@ -405,16 +414,17 @@ SQL-запросы для `sqlc` живут в `internal/infra/postgres/queries/
 
 ```
 queries/
-  users.sql       EnsureUser, GetUserByExternalID
-  meetings.sql    CreateMeeting, GetMeetingForUser, ListMeetingsByUser,
-                  GetTranscriptForUser, GetSummaryForUser, SearchMeetings
-  tasks.sql       CreateTask, GetTaskByMeetingID, MarkTaskProcessing,
-                  InsertTranscription, MarkTaskTranscribed,
-                  InsertSummary, MarkTaskSummarized,
-                  MarkTaskCompleted, MarkTaskFailed,
-                  InsertStatusHistory, ListStatusHistory,
-                  ListPendingTasks, ResetStaleProcessing
-  chat.sql        SaveChatMessage, HistoryChatMessages
+  users.sql          EnsureUser, GetUserByExternalID
+  meetings.sql       CreateMeeting, GetMeetingForUser, ListMeetingsByUser,
+                     GetMeetingByTaskID, SearchMeetings
+  tasks.sql          CreateTask, GetTaskByID, GetTaskForMeetingAndUser,
+                     MarkTaskProcessing, MarkTaskTranscribed, MarkTaskSummarized,
+                     MarkTaskCompleted, MarkTaskFailed,
+                     InsertStatusHistory, ListStatusHistory,
+                     ResetStaleProcessing, ListPendingTasks
+  transcriptions.sql InsertTranscription, GetTranscriptForUser
+  summaries.sql      InsertSummary, GetSummaryForUser
+  chat.sql           SaveChatMessage, HistoryChatMessages
 ```
 
 ### 6.2. Синхронизация `schema.sql` с миграциями

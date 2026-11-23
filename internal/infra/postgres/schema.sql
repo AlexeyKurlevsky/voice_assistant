@@ -31,11 +31,11 @@ CREATE INDEX idx_tasks_status ON processing_tasks (status);
 CREATE TABLE status_history (
     id         UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     task_id    UUID        NOT NULL REFERENCES processing_tasks(id) ON DELETE CASCADE,
-    old_status TEXT,
-    new_status TEXT        NOT NULL,
+    status     TEXT        NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX idx_status_history_task ON status_history (task_id, created_at);
+
 
 CREATE TABLE transcriptions (
     id         UUID        PRIMARY KEY DEFAULT gen_random_uuid(),

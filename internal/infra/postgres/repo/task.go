@@ -24,7 +24,7 @@ func NewTaskRepo(pool *pgxpool.Pool) *TaskRepo {
 	return &TaskRepo{pool: pool, q: sqlcgen.New(pool)}
 }
 
-// MarkProcessing — T2: created → processing, attempts++.
+// MarkProcessing — переход created → processing, attempts++.
 func (r *TaskRepo) MarkProcessing(ctx context.Context, taskID uuid.UUID) error {
 	return r.transition(ctx, taskID,
 		func(q *sqlcgen.Queries) error {
@@ -34,7 +34,7 @@ func (r *TaskRepo) MarkProcessing(ctx context.Context, taskID uuid.UUID) error {
 	)
 }
 
-// MarkCompleted — T5: summarized → completed.
+// MarkCompleted — переход summarized → completed.
 func (r *TaskRepo) MarkCompleted(ctx context.Context, taskID uuid.UUID) error {
 	return r.transition(ctx, taskID,
 		func(q *sqlcgen.Queries) error {
@@ -44,7 +44,7 @@ func (r *TaskRepo) MarkCompleted(ctx context.Context, taskID uuid.UUID) error {
 	)
 }
 
-// MarkFailed — T6: перевод в failed с error_message.
+// MarkFailed — перевод в failed с error_message.
 func (r *TaskRepo) MarkFailed(ctx context.Context, taskID uuid.UUID, errMsg string) error {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
@@ -53,13 +53,6 @@ func (r *TaskRepo) MarkFailed(ctx context.Context, taskID uuid.UUID, errMsg stri
 	defer tx.Rollback(ctx)
 
 	qtx := r.q.WithTx(tx)
-	cur, err := qtx.GetTaskStatus(ctx, toPgUUID(taskID))
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return domain.ErrNotFound
-		}
-		return fmt.Errorf("task_repo.MarkFailed: get status: %w", err)
-	}
 
 	if err := qtx.MarkTaskFailed(ctx, sqlcgen.MarkTaskFailedParams{
 		ID:           toPgUUID(taskID),
@@ -68,21 +61,20 @@ func (r *TaskRepo) MarkFailed(ctx context.Context, taskID uuid.UUID, errMsg stri
 		return fmt.Errorf("task_repo.MarkFailed: update: %w", err)
 	}
 
-	oldStatus := cur
 	if err := qtx.InsertStatusHistory(ctx, sqlcgen.InsertStatusHistoryParams{
-		TaskID:    toPgUUID(taskID),
-		OldStatus: &oldStatus,
-		NewStatus: string(domain.StatusFailed),
+		TaskID: toPgUUID(taskID),
+		Status: string(domain.StatusFailed),
 	}); err != nil {
 		return fmt.Errorf("task_repo.MarkFailed: insert history: %w", err)
 	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("task_repo.MarkFailed: commit: %w", err)
 	}
 	return nil
 }
 
-// transition — общий путь для «UPDATE + INSERT history» переходов.
+// transition — общий путь для «UPDATE status + INSERT history» переходов.
 func (r *TaskRepo) transition(
 	ctx context.Context,
 	taskID uuid.UUID,
@@ -97,23 +89,13 @@ func (r *TaskRepo) transition(
 
 	qtx := r.q.WithTx(tx)
 
-	cur, err := qtx.GetTaskStatus(ctx, toPgUUID(taskID))
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return domain.ErrNotFound
-		}
-		return fmt.Errorf("task_repo.transition: get status: %w", err)
-	}
-
 	if err := doUpdate(qtx); err != nil {
 		return fmt.Errorf("task_repo.transition: update: %w", err)
 	}
 
-	oldStatus := cur
 	if err := qtx.InsertStatusHistory(ctx, sqlcgen.InsertStatusHistoryParams{
-		TaskID:    toPgUUID(taskID),
-		OldStatus: &oldStatus,
-		NewStatus: string(newStatus),
+		TaskID: toPgUUID(taskID),
+		Status: string(newStatus),
 	}); err != nil {
 		return fmt.Errorf("task_repo.transition: insert history: %w", err)
 	}
@@ -124,8 +106,7 @@ func (r *TaskRepo) transition(
 	return nil
 }
 
-// SaveTranscriptionAndMarkTranscribed — T3.
-// Атомарно: INSERT transcriptions + UPDATE status + INSERT history.
+// SaveTranscriptionAndMarkTranscribed: INSERT transcriptions + UPDATE status + history.
 func (r *TaskRepo) SaveTranscriptionAndMarkTranscribed(ctx context.Context, taskID uuid.UUID, text string) error {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
@@ -154,11 +135,9 @@ func (r *TaskRepo) SaveTranscriptionAndMarkTranscribed(ctx context.Context, task
 		return fmt.Errorf("task_repo.SaveTranscription: update status: %w", err)
 	}
 
-	oldStatus := string(t.Status)
 	if err := qtx.InsertStatusHistory(ctx, sqlcgen.InsertStatusHistoryParams{
-		TaskID:    toPgUUID(taskID),
-		OldStatus: &oldStatus,
-		NewStatus: string(domain.StatusTranscribed),
+		TaskID: toPgUUID(taskID),
+		Status: string(domain.StatusTranscribed),
 	}); err != nil {
 		return fmt.Errorf("task_repo.SaveTranscription: insert history: %w", err)
 	}
@@ -169,8 +148,7 @@ func (r *TaskRepo) SaveTranscriptionAndMarkTranscribed(ctx context.Context, task
 	return nil
 }
 
-// SaveSummaryAndMarkSummarized — T4.
-// Атомарно: INSERT summaries + UPDATE status + INSERT history.
+// SaveSummaryAndMarkSummarized: INSERT summaries + UPDATE status + history.
 func (r *TaskRepo) SaveSummaryAndMarkSummarized(ctx context.Context, taskID uuid.UUID, text string) error {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
@@ -199,11 +177,9 @@ func (r *TaskRepo) SaveSummaryAndMarkSummarized(ctx context.Context, taskID uuid
 		return fmt.Errorf("task_repo.SaveSummary: update status: %w", err)
 	}
 
-	oldStatus := string(t.Status)
 	if err := qtx.InsertStatusHistory(ctx, sqlcgen.InsertStatusHistoryParams{
-		TaskID:    toPgUUID(taskID),
-		OldStatus: &oldStatus,
-		NewStatus: string(domain.StatusSummarized),
+		TaskID: toPgUUID(taskID),
+		Status: string(domain.StatusSummarized),
 	}); err != nil {
 		return fmt.Errorf("task_repo.SaveSummary: insert history: %w", err)
 	}
@@ -249,7 +225,7 @@ func (r *TaskRepo) GetByMeetingIDForUser(ctx context.Context, meetingID, userID 
 	}, nil
 }
 
-// ListStatusHistory — история переходов задачи, по возрастанию времени.
+// ListStatusHistory — история переходов, по возрастанию времени.
 func (r *TaskRepo) ListStatusHistory(ctx context.Context, taskID uuid.UUID) ([]domain.StatusChange, error) {
 	rows, err := r.q.ListStatusHistory(ctx, toPgUUID(taskID))
 	if err != nil {
@@ -257,14 +233,9 @@ func (r *TaskRepo) ListStatusHistory(ctx context.Context, taskID uuid.UUID) ([]d
 	}
 	out := make([]domain.StatusChange, 0, len(rows))
 	for _, row := range rows {
-		old := ""
-		if row.OldStatus != nil {
-			old = *row.OldStatus
-		}
 		out = append(out, domain.StatusChange{
-			TaskID:    toUUID(row.TaskID),
-			OldStatus: domain.Status(old),
-			NewStatus: domain.Status(row.NewStatus),
+			TaskID:    taskID,
+			Status:    domain.Status(row.Status),
 			CreatedAt: row.CreatedAt,
 		})
 	}
@@ -272,7 +243,6 @@ func (r *TaskRepo) ListStatusHistory(ctx context.Context, taskID uuid.UUID) ([]d
 }
 
 // ResetStaleProcessing — recovery: processing → created, возвращает task_id[].
-// В status_history не пишет (это восстановление, не бизнес-переход).
 func (r *TaskRepo) ResetStaleProcessing(ctx context.Context) ([]uuid.UUID, error) {
 	rows, err := r.q.ResetStaleProcessing(ctx)
 	if err != nil {
@@ -285,7 +255,7 @@ func (r *TaskRepo) ResetStaleProcessing(ctx context.Context) ([]uuid.UUID, error
 	return out, nil
 }
 
-// ListPending — задачи в статусе created (для дозахвата на старте).
+// ListPending — задачи в незавершённых статусах (для дозахвата на старте).
 func (r *TaskRepo) ListPending(ctx context.Context) ([]uuid.UUID, error) {
 	rows, err := r.q.ListPendingTasks(ctx)
 	if err != nil {

@@ -8,9 +8,6 @@ SELECT id, meeting_id, status, error_message, attempts, created_at, updated_at
 FROM processing_tasks
 WHERE id = $1;
 
--- name: GetTaskStatus :one
-SELECT status FROM processing_tasks WHERE id = $1;
-
 -- name: GetTaskForMeetingAndUser :one
 SELECT t.id, t.meeting_id, t.status, t.error_message, t.attempts, t.created_at, t.updated_at
 FROM processing_tasks t
@@ -37,11 +34,11 @@ SET status = 'failed', error_message = $2, updated_at = now()
 WHERE id = $1;
 
 -- name: InsertStatusHistory :exec
-INSERT INTO status_history (task_id, old_status, new_status)
-VALUES ($1, $2, $3);
+INSERT INTO status_history (task_id, status)
+VALUES ($1, $2);
 
 -- name: ListStatusHistory :many
-SELECT task_id, old_status, new_status, created_at
+SELECT status, created_at
 FROM status_history
 WHERE task_id = $1
 ORDER BY created_at ASC;
@@ -53,4 +50,4 @@ WHERE status = 'processing'
 RETURNING id;
 
 -- name: ListPendingTasks :many
-SELECT id FROM processing_tasks WHERE status = 'created';
+SELECT id FROM processing_tasks WHERE status IN ('created', 'transcribed', 'summarized');

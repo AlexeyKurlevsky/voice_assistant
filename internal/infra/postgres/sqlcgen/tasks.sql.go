@@ -94,35 +94,23 @@ func (q *Queries) GetTaskForMeetingAndUser(ctx context.Context, arg GetTaskForMe
 	return i, err
 }
 
-const getTaskStatus = `-- name: GetTaskStatus :one
-SELECT status FROM processing_tasks WHERE id = $1
-`
-
-func (q *Queries) GetTaskStatus(ctx context.Context, id pgtype.UUID) (string, error) {
-	row := q.db.QueryRow(ctx, getTaskStatus, id)
-	var status string
-	err := row.Scan(&status)
-	return status, err
-}
-
 const insertStatusHistory = `-- name: InsertStatusHistory :exec
-INSERT INTO status_history (task_id, old_status, new_status)
-VALUES ($1, $2, $3)
+INSERT INTO status_history (task_id, status)
+VALUES ($1, $2)
 `
 
 type InsertStatusHistoryParams struct {
-	TaskID    pgtype.UUID
-	OldStatus *string
-	NewStatus string
+	TaskID pgtype.UUID
+	Status string
 }
 
 func (q *Queries) InsertStatusHistory(ctx context.Context, arg InsertStatusHistoryParams) error {
-	_, err := q.db.Exec(ctx, insertStatusHistory, arg.TaskID, arg.OldStatus, arg.NewStatus)
+	_, err := q.db.Exec(ctx, insertStatusHistory, arg.TaskID, arg.Status)
 	return err
 }
 
 const listPendingTasks = `-- name: ListPendingTasks :many
-SELECT id FROM processing_tasks WHERE status = 'created'
+SELECT id FROM processing_tasks WHERE status IN ('created', 'transcribed', 'summarized')
 `
 
 func (q *Queries) ListPendingTasks(ctx context.Context) ([]pgtype.UUID, error) {
@@ -146,16 +134,14 @@ func (q *Queries) ListPendingTasks(ctx context.Context) ([]pgtype.UUID, error) {
 }
 
 const listStatusHistory = `-- name: ListStatusHistory :many
-SELECT task_id, old_status, new_status, created_at
+SELECT status, created_at
 FROM status_history
 WHERE task_id = $1
 ORDER BY created_at ASC
 `
 
 type ListStatusHistoryRow struct {
-	TaskID    pgtype.UUID
-	OldStatus *string
-	NewStatus string
+	Status    string
 	CreatedAt time.Time
 }
 
@@ -168,12 +154,7 @@ func (q *Queries) ListStatusHistory(ctx context.Context, taskID pgtype.UUID) ([]
 	items := []ListStatusHistoryRow{}
 	for rows.Next() {
 		var i ListStatusHistoryRow
-		if err := rows.Scan(
-			&i.TaskID,
-			&i.OldStatus,
-			&i.NewStatus,
-			&i.CreatedAt,
-		); err != nil {
+		if err := rows.Scan(&i.Status, &i.CreatedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

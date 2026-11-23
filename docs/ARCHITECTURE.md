@@ -10,7 +10,7 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  presentation:  cmd/meeting-assistant, internal/cli         │
+│  presentation:  cmd/voice-assistant, internal/cli           │
 │  Принимает команды. Никакой бизнес-логики.                  │
 └──────────────────────────┬──────────────────────────────────┘
                            │ вызывает use cases
@@ -29,10 +29,11 @@
 └──────────────────────────┘      └────────────┬───────────────┘
                                                │ реализуется в
 ┌──────────────────────────────────────────────▼──────────────┐
-│  infra: internal/infra                    │
+│  infrastructure: internal/infra                             │
 │  postgres — sqlcgen + обёртки-репозитории (pgx/v5);         │
 │  speech   — mock, whisper;                                  │
-│  llm      — mock, openrouter.                               │
+│  llm      — mock, openrouter;                               │
+│  worker   — фоновый pipeline обработки задач.               │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -41,7 +42,7 @@
 импортируют `application` и `domain`. Обратного импорта нет.
 
 **`sqlcgen` — деталь инфраструктуры.** Сгенерированный код не «протекает»
-наружу: `domain` и `application` про него не знают. Обёртки `*_repo.go`
+наружу: `domain` и `application` про него не знают. Обёртки `repo/*.go`
 маппят `sqlcgen.*` в доменные типы и обратно.
 
 ---
@@ -49,7 +50,7 @@
 ## 2. Структура пакетов
 
 ```
-cmd/meeting-assistant/main.go      сборка приложения, DI, graceful shutdown
+cmd/voice-assistant/main.go        сборка приложения, DI, graceful shutdown
 internal/
   config/                          загрузка env, валидация
   domain/                          сущности, статусы, доменные ошибки
@@ -57,7 +58,6 @@ internal/
     ports.go
     user_service.go
     meeting_service.go
-    chat_service.go
     worker_pool.go
   infra/
     postgres/
@@ -67,17 +67,18 @@ internal/
         users.sql
         meetings.sql
         tasks.sql
-        chat.sql
-      sqlcgen/                     сгенерированный код (коммитится, руками не правится)
+        transcriptions.sql
+        summaries.sql
+      sqlcgen/                     сгенерированный код (коммитится)
       migrations/                  golang-migrate (0001_init.up/down.sql)
-      db.go                        pgxpool + запуск миграций
+      db.go                        package postgres — pgxpool + запуск миграций
       repo/
+        pgconv.go                  package repo — toUUID / toPgUUID
         user.go                    package repo — обёртка: sqlcgen → domain
         meeting.go
         task.go
-        chat.go
-    speech/                        mock.go, whisper.go, factory.go
-    llm/                           mock.go, openrouter.go, factory.go
+    speech/                        mock.go, factory.go (+ whisper в будущем)
+    llm/                           mock.go, factory.go (+ openrouter в будущем)
   worker/
     processor.go                   pipeline: transcribe → summarize → finalize
   cli/
@@ -124,12 +125,12 @@ sequenceDiagram
     participant SVC as UserService
     participant R as UserRepo
 
-    U->>CLI: meeting-assistant --user alice start
+    U->>CLI: voice-assistant --user alice start
     CLI->>SVC: EnsureExists(ctx, "alice")
     SVC->>R: EnsureExists(ctx, "alice")
     R-->>SVC: *User
     SVC-->>CLI: *User
-    CLI-->>U: user_id=1
+    CLI-->>U: user_id=<uuid>
 ```
 
 `INSERT ... ON CONFLICT (external_id) DO UPDATE SET external_id = EXCLUDED.external_id RETURNING ...` — идемпотентно.
@@ -149,7 +150,7 @@ sequenceDiagram
     CLI->>MS: Load(ctx, userID, path)
     MS->>MS: validateFile(path)
     MS->>FS: saveCopy(uploadDir/uuid.mp3)
-    MS->>MR: CreateWithTask(ctx, meeting) — TX
+    MS->>MR: CreateWithTask(ctx, meeting) — транзакция
     MR-->>MS: *Task (status=created)
     MS->>Q: Enqueue(ctx, task.ID)
     alt очередь переполнена
@@ -167,16 +168,21 @@ sequenceDiagram
 ```mermaid
 flowchart TD
     Start([Worker pool: N горутин]) --> Take[Take task ID из jobs]
-    Take --> Mark[MarkProcessing: created→processing — TX]
+    Take --> GetTask[TaskRepo.GetByID]
+    GetTask --> Terminal{IsTerminal?}
+    Terminal -->|да| Skip[skip, log]
+    Terminal -->|нет| Recover{status == summarized?}
+    Recover -->|да| FastComplete[MarkCompleted — recovery]
+    Recover -->|нет| Mark[MarkProcessing: created→processing — транзакция]
     Mark --> ST1["ctx, cancel = context.WithTimeout(parent, SpeechTimeout)"]
     ST1 --> Speech[SpeechClient.Transcribe]
-    Speech -->|ok| SaveT[SaveTranscriptionAndMarkTranscribed — TX]
-    Speech -->|err / timeout| Fail[MarkFailed — TX]
+    Speech -->|ok| SaveT[SaveTranscriptionAndMarkTranscribed — транзакция]
+    Speech -->|err / timeout| Fail[MarkFailed — транзакция]
     SaveT --> ST2["ctx, cancel = context.WithTimeout(parent, LLMTimeout)"]
     ST2 --> LLM[LLMClient.Summarize]
-    LLM -->|ok| SaveS[SaveSummaryAndMarkSummarized — TX]
+    LLM -->|ok| SaveS[SaveSummaryAndMarkSummarized — транзакция]
     LLM -->|err / timeout| Fail
-    SaveS --> Final[MarkCompleted — TX]
+    SaveS --> Final[MarkCompleted — транзакция]
     Final --> Done([completed])
     Fail --> DoneF([failed])
 ```
@@ -185,7 +191,9 @@ flowchart TD
 в `status_history`. Подробности — в [`STATUS_MODEL.md`](STATUS_MODEL.md).
 
 Отмена родительского контекста (SIGTERM/SIGINT) прерывает текущий шаг;
-для текущей задачи выполняется `MarkFailed(..., "shutdown")`, если она не успела.
+для текущей задачи выполняется `MarkFailed(..., "shutdown")` с отдельным
+контекстом (см. `worker.processor.fail`), чтобы пережить уже отменённый
+родительский контекст.
 
 ### 4.4. Чтение результатов
 
@@ -196,7 +204,7 @@ sequenceDiagram
     participant SVC as Service
     participant R as Repo
 
-    U->>CLI: get 42 / list / find / chat
+    U->>CLI: get 42 / list / status / find / chat
     CLI->>SVC: метод(ctx, userID, ...)
     SVC->>R: запрос с WHERE user_id = $1
     Note over R: репозиторий сам гарантирует<br/>разграничение прав
@@ -224,7 +232,7 @@ domain.ErrQueueFull       → "server busy, try later"      (exit 3)
 - проверки через `errors.Is` / `errors.As`;
 - инфраструктурные ошибки → доменные: `pgx.ErrNoRows → domain.ErrNotFound`.
 
-**Маппинг `pgx → domain` — на обёртке `*_repo.go`.** `sqlcgen` возвращает
+**Маппинг `pgx → domain` — на обёртке `repo/*.go`.** `sqlcgen` возвращает
 `pgx.ErrNoRows`; обёртка переводит его в `domain.ErrNotFound`. `application`
 и `domain` про `pgx` не знают.
 
@@ -236,14 +244,19 @@ domain.ErrQueueFull       → "server busy, try later"      (exit 3)
 
 ## 6. Конкурентность
 
-- **Worker pool** — `chan int64` с буфером `JobQueueCapacity`, `N` горутин-воркеров.
+- **Worker pool** — `chan uuid.UUID` с буфером `JobQueueCapacity`, `N` горутин-воркеров.
 - **Enqueue** — неблокирующий `select` с `default`; если канал полон —
   `ErrQueueFull` (без создания горутин).
 - **Backpressure** — через переполнение очереди, явная ошибка пользователю.
-- **Per-task context** — `context.WithTimeout` на каждый шаг.
+- **Per-task context** — `context.WithTimeout` на каждый шаг (`SpeechTimeout`, `LLMTimeout`).
 - **Graceful shutdown** — `signal.NotifyContext` → отмена корневого →
   воркеры дочитывают канал → `close(jobs)` → `wg.Wait()` с дедлайном
-  `ShutdownTimeout` → `pgxpool.Close()`.
+  `ShutdownTimeout`. Контекст воркеров отменяется **после** `wg.Wait`
+  (нормальный сценарий) либо принудительно, если `ShutdownTimeout` истёк.
+  Затем — `pgxpool.Close()`.
+- **Recovery** — `ResetStaleProcessing` + `ListPending` на старте команды
+  `load` (единственной, которая инициирует новую работу). Read-only команды
+  (`start`, `list`, `status`, `get`) recovery не запускают.
 
 Проверки качества:
 - `go test -race ./...`;
@@ -256,26 +269,28 @@ domain.ErrQueueFull       → "server busy, try later"      (exit 3)
 
 | Операция | Где | Атомарно |
 |---|---|---|
-| `CreateWithTask` | `meeting_repo.go` | `INSERT meetings` + `INSERT processing_tasks(status=created)` + `INSERT status_history` |
-| `MarkProcessing` | `task_repo.go` | `UPDATE status='processing', attempts+1` + `INSERT status_history` |
-| `SaveTranscriptionAndMarkTranscribed` | `task_repo.go` | `INSERT transcriptions` + `UPDATE status='transcribed'` + `INSERT status_history` |
-| `SaveSummaryAndMarkSummarized` | `task_repo.go` | `INSERT summaries` + `UPDATE status='summarized'` + `INSERT status_history` |
-| `MarkCompleted` | `task_repo.go` | `UPDATE status='completed'` + `INSERT status_history` |
-| `MarkFailed` | `task_repo.go` | `UPDATE status='failed', error_message=$1` + `INSERT status_history` |
+| `CreateWithTask` | `repo/meeting.go` | `INSERT meetings` + `INSERT processing_tasks(status=created)` + `INSERT status_history(status=created)` |
+| `MarkProcessing` | `repo/task.go` | `UPDATE status='processing', attempts+1` + `INSERT status_history(status=processing)` |
+| `SaveTranscriptionAndMarkTranscribed` | `repo/task.go` | `INSERT transcriptions` + `UPDATE status='transcribed'` + `INSERT status_history(status=transcribed)` |
+| `SaveSummaryAndMarkSummarized` | `repo/task.go` | `INSERT summaries` + `UPDATE status='summarized'` + `INSERT status_history(status=summarized)` |
+| `MarkCompleted` | `repo/task.go` | `UPDATE status='completed'` + `INSERT status_history(status=completed)` |
+| `MarkFailed` | `repo/task.go` | `UPDATE status='failed', error_message=$1` + `INSERT status_history(status=failed)` |
 
 Реализация — `pgxpool.Begin` → `queries.WithTx(tx)` → `tx.Commit` /
 `defer tx.Rollback(ctx)`. Все запросы внутри транзакции идут через
-`sqlcgen.Queries`, привязанный к `tx`.
+`sqlcgen.Queries`, привязанный к транзакции.
 
 ---
 
 ## 8. Фабрика клиентов по конфигу
 
 ```go
-speechClient := speech.New(cfg.SpeechProvider, speech.Options{
-    BaseURL: cfg.WhisperBaseURL, APIKey: cfg.WhisperAPIKey,
+speechClient, err := speech.New(cfg.SpeechProvider, speech.Options{
+    MockDelay: cfg.MockSpeechDelay,
 })
-llmClient := llm.New(cfg.LLMProvider, llm.Options{...})
+llmClient, err := llm.New(cfg.LLMProvider, llm.Options{
+    MockDelay: cfg.MockLLMDelay,
+})
 ```
 
 Фабрики в `infra/*/factory.go`. Замена `mock → whisper` — только
@@ -285,10 +300,10 @@ env (`MS_SPEECH_PROVIDER=whisper` + ключ). Бизнес-логика не м
 
 ## 9. Генерация кода БД через sqlc
 
-Слой доступа к данным использует `sqlc` как **dev-time генератор**:
-SQL-запросы пишутся вручную в `queries/*.sql`, `sqlc generate` компилирует
-их в типобезопасный Go-код в `sqlcgen/`. В рантайме новых зависимостей нет —
-`sqlcgen` вызывает тот же `pgx/v5`, что и раньше.
+Слой доступа к данным (`internal/infra/postgres`) использует `sqlc` как
+**dev-time генератор**: SQL-запросы пишутся вручную в `queries/*.sql`,
+`sqlc generate` компилирует их в типобезопасный Go-код в `sqlcgen/`.
+В рантайме новых зависимостей нет — `sqlcgen` вызывает тот же `pgx/v5`.
 
 ### 9.1. Что где живёт
 
@@ -330,11 +345,34 @@ sql:
         sql_package: "pgx/v5"
         emit_pointers_for_null_types: true
         emit_empty_slices: true
+        overrides:
+          - db_type: "pg_catalog.timestamptz"
+            go_type:
+              import: "time"
+              type: "Time"
+          - db_type: "timestamptz"
+            go_type:
+              import: "time"
+              type: "Time"
+          - db_type: "pg_catalog.timestamptz"
+            nullable: true
+            go_type:
+              import: "time"
+              type: "Time"
+              pointer: true
+          - db_type: "timestamptz"
+            nullable: true
+            go_type:
+              import: "time"
+              type: "Time"
+              pointer: true
 ```
 
 - `sql_package: "pgx/v5"` — генерируется код поверх `pgx`, а не `database/sql`.
-- `emit_pointers_for_null_types: true` — `NULL`-колонки становятся `*T`,
-  а не `sql.NullString` / `pgtype.Text`.
+- `emit_pointers_for_null_types: true` — `NULL`-колонки становятся `*T`.
+- `overrides` для `timestamptz` — `NOT NULL` колонки дают `time.Time`,
+  nullable — `*time.Time`. Без overrides `sqlc` генерирует `pgtype.Timestamptz`,
+  что заставляет делать `.Time` в маппинге.
 - `emit_empty_slices: true` — `:many` возвращает `[]T{}`, а не `nil`.
 - `emit_interface` — **не включаем**: `Querier` не нужен, unit-тесты мокают
   `application.*Repo`, а не `sqlcgen`.
@@ -343,6 +381,6 @@ sql:
 
 - Запрос `find` с `ts_headline` — гибридно: если `sqlc` справится с типами
   без overrides, оставляем в `queries/meetings.sql`; если нет — метод
-  `Search` в `meeting_repo.go` пишется напрямую через `pgxpool.Query`.
+  `Search` в `repo/meeting.go` пишется напрямую через `pgxpool.Query`.
 - Любые будущие динамические фильтры (`list --status=...`) — `sqlc`
   не собирает SQL на лету.

@@ -41,8 +41,7 @@ type ProcessingTask struct {
 type StatusHistory struct {
 	ID        pgtype.UUID
 	TaskID    pgtype.UUID
-	OldStatus *string
-	NewStatus string
+	Status    string
 	CreatedAt time.Time
 }
 

@@ -153,3 +153,20 @@ func copyFile(src, dst string) error {
 	}
 	return out.Sync()
 }
+
+// Status возвращает задачу обработки встречи с проверкой прав.
+// ErrNotFound, если встреча чужая или не существует.
+func (s *MeetingService) Status(ctx context.Context, meetingID, userID uuid.UUID) (*domain.Task, error) {
+	return s.taskRepo.GetByMeetingIDForUser(ctx, meetingID, userID)
+}
+
+// StatusHistory возвращает историю переходов задачи, по возрастанию времени.
+func (s *MeetingService) StatusHistory(ctx context.Context, taskID uuid.UUID) ([]domain.StatusChange, error) {
+	return s.taskRepo.ListStatusHistory(ctx, taskID)
+}
+
+// Transcript возвращает транскрипцию встречи с проверкой прав.
+// ErrNotFound, если встреча чужая или транскрипции ещё нет.
+func (s *MeetingService) Transcript(ctx context.Context, meetingID, userID uuid.UUID) (string, error) {
+	return s.meetingRepo.GetTranscript(ctx, meetingID, userID)
+}

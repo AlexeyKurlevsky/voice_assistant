@@ -75,14 +75,13 @@ func (p *WorkerPool) Enqueue(ctx context.Context, taskID uuid.UUID) error {
 	}
 }
 
-// Stop: stopped=true → cancel ctx → close(jobs) → wg.Wait в пределах ctx.
-// Идемпотентен (stopOnce). Ошибка, если ctx истёк до завершения воркеров.
+// Stop: stopped=true → close(jobs) → ждём завершения воркеров в пределах ctx.
+// Контекст воркеров отменяется только после того, как все они завершились
+// (нормальный сценарий) или истёк ctx (принудительный shutdown).
+// Идемпотентен.
 func (p *WorkerPool) Stop(ctx context.Context) error {
 	p.stopOnce.Do(func() {
 		p.stopped.Store(true)
-		if p.cancel != nil {
-			p.cancel()
-		}
 		close(p.jobs)
 	})
 
@@ -94,8 +93,16 @@ func (p *WorkerPool) Stop(ctx context.Context) error {
 
 	select {
 	case <-done:
+		// Воркеры доработали сами — отменяем ctx только для очистки ресурсов.
+		if p.cancel != nil {
+			p.cancel()
+		}
 		return nil
 	case <-ctx.Done():
+		// Таймаут: отменяем ctx, чтобы воркеры прервали текущие операции.
+		if p.cancel != nil {
+			p.cancel()
+		}
 		return fmt.Errorf("worker_pool.Stop: %w", ctx.Err())
 	}
 }
