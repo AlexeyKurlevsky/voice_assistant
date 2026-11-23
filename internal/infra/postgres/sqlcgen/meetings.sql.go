@@ -141,3 +141,59 @@ func (q *Queries) ListMeetingsByUser(ctx context.Context, arg ListMeetingsByUser
 	}
 	return items, nil
 }
+
+const searchMeetings = `-- name: SearchMeetings :many
+SELECT m.id, m.title, m.created_at, t.status,
+ts_headline('simple',
+            COALESCE(s.text, tr.text),
+            websearch_to_tsquery('simple', $1::text),
+            'MaxFragments=1,MaxWords=15')::text AS snippet
+FROM meetings m
+JOIN processing_tasks t ON t.meeting_id = m.id
+LEFT JOIN summaries s   ON s.meeting_id = m.id
+LEFT JOIN transcriptions tr ON tr.meeting_id = m.id
+WHERE m.user_id = $2
+  AND (to_tsvector('simple', COALESCE(s.text, '')) @@ websearch_to_tsquery('simple', $1::text)
+    OR to_tsvector('simple', COALESCE(tr.text, '')) @@ websearch_to_tsquery('simple', $1::text))
+ORDER BY m.created_at DESC
+LIMIT 50
+`
+
+type SearchMeetingsParams struct {
+	Query  string
+	UserID pgtype.UUID
+}
+
+type SearchMeetingsRow struct {
+	ID        pgtype.UUID
+	Title     string
+	CreatedAt time.Time
+	Status    string
+	Snippet   string
+}
+
+func (q *Queries) SearchMeetings(ctx context.Context, arg SearchMeetingsParams) ([]SearchMeetingsRow, error) {
+	rows, err := q.db.Query(ctx, searchMeetings, arg.Query, arg.UserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SearchMeetingsRow{}
+	for rows.Next() {
+		var i SearchMeetingsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Title,
+			&i.CreatedAt,
+			&i.Status,
+			&i.Snippet,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

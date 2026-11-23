@@ -174,3 +174,26 @@ func (r *MeetingRepo) GetSummary(ctx context.Context, meetingID, userID uuid.UUI
 	}
 	return text, nil
 }
+
+// Search — полнотекстовый поиск по встречам пользователя.
+func (r *MeetingRepo) Search(ctx context.Context, userID uuid.UUID, query string) ([]domain.SearchHit, error) {
+	rows, err := r.q.SearchMeetings(ctx, sqlcgen.SearchMeetingsParams{
+		UserID: toPgUUID(userID),
+		Query:  query,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("meeting_repo.Search: %w", err)
+	}
+
+	out := make([]domain.SearchHit, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, domain.SearchHit{
+			ID:        toUUID(row.ID),
+			Title:     row.Title,
+			Status:    domain.Status(row.Status),
+			Snippet:   row.Snippet,
+			CreatedAt: row.CreatedAt,
+		})
+	}
+	return out, nil
+}

@@ -76,6 +76,7 @@ func run(cfg *config.Config, log *slog.Logger) int {
 	userRepo := repo.NewUserRepo(pool)
 	meetingRepo := repo.NewMeetingRepo(pool)
 	taskRepo := repo.NewTaskRepo(pool)
+	chatRepo := repo.NewChatRepo(pool)
 
 	// Worker pool с реальным процессором
 	processor := worker.NewProcessor(
@@ -104,11 +105,15 @@ func run(cfg *config.Config, log *slog.Logger) int {
 	meetingService := application.NewMeetingService(
 		meetingRepo, taskRepo, wp, cfg.UploadDir, cfg.MaxUploadBytes, log,
 	)
+	chatService := application.NewChatService(
+		meetingRepo, taskRepo, chatRepo, llmClient, cfg.LLMTimeout, log,
+	)
 
 	// CLI
 	deps := &cli.Deps{
 		UserService:    userService,
 		MeetingService: meetingService,
+		ChatService:    chatService,
 	}
 	root := cli.NewRoot(deps)
 

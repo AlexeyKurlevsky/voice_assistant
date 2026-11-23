@@ -12,10 +12,10 @@ import (
 type Deps struct {
 	UserService    *application.UserService
 	MeetingService *application.MeetingService
+	ChatService    *application.ChatService
 }
 
 // NewRoot собирает корневую команду и все подкоманды.
-// Общие флаги: --user (обязательный), --json.
 func NewRoot(deps *Deps) *cobra.Command {
 	var (
 		userID  string
@@ -39,6 +39,8 @@ func NewRoot(deps *Deps) *cobra.Command {
 		newListCmd(deps, &userID, &jsonOut),
 		newStatusCmd(deps, &userID, &jsonOut),
 		newGetCmd(deps, &userID, &jsonOut),
+		newFindCmd(deps, &userID, &jsonOut),
+		newChatCmd(deps, &userID, &jsonOut),
 	)
 
 	return root

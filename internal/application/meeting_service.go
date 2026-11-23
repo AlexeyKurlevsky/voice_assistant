@@ -170,3 +170,17 @@ func (s *MeetingService) StatusHistory(ctx context.Context, taskID uuid.UUID) ([
 func (s *MeetingService) Transcript(ctx context.Context, meetingID, userID uuid.UUID) (string, error) {
 	return s.meetingRepo.GetTranscript(ctx, meetingID, userID)
 }
+
+// Search выполняет полнотекстовый поиск по встречам пользователя.
+// Пустой запрос — ErrInvalidArgument.
+func (s *MeetingService) Search(ctx context.Context, userID uuid.UUID, query string) ([]domain.SearchHit, error) {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return nil, fmt.Errorf("%w: keyword is required", domain.ErrInvalidArgument)
+	}
+	hits, err := s.meetingRepo.Search(ctx, userID, query)
+	if err != nil {
+		return nil, fmt.Errorf("meeting_service.Search: %w", err)
+	}
+	return hits, nil
+}

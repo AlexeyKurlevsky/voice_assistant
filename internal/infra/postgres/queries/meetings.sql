@@ -24,3 +24,19 @@ SELECT m.id, m.user_id, m.title, m.original_filename, m.file_path, m.created_at
 FROM meetings m
 JOIN processing_tasks t ON t.meeting_id = m.id
 WHERE t.id = $1;
+
+-- name: SearchMeetings :many
+SELECT m.id, m.title, m.created_at, t.status,
+ts_headline('simple',
+            COALESCE(s.text, tr.text),
+            websearch_to_tsquery('simple', sqlc.arg(query)::text),
+            'MaxFragments=1,MaxWords=15')::text AS snippet
+FROM meetings m
+JOIN processing_tasks t ON t.meeting_id = m.id
+LEFT JOIN summaries s   ON s.meeting_id = m.id
+LEFT JOIN transcriptions tr ON tr.meeting_id = m.id
+WHERE m.user_id = sqlc.arg(user_id)
+  AND (to_tsvector('simple', COALESCE(s.text, '')) @@ websearch_to_tsquery('simple', sqlc.arg(query)::text)
+    OR to_tsvector('simple', COALESCE(tr.text, '')) @@ websearch_to_tsquery('simple', sqlc.arg(query)::text))
+ORDER BY m.created_at DESC
+LIMIT 50;

@@ -28,3 +28,12 @@ type MeetingListItem struct {
 	Summary   string // "" если выжимки ещё нет
 	CreatedAt time.Time
 }
+
+// SearchHit — строка для команды find.
+type SearchHit struct {
+	ID        uuid.UUID
+	Title     string
+	Status    Status
+	Snippet   string
+	CreatedAt time.Time
+}

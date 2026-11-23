@@ -46,6 +46,10 @@ type MeetingRepo interface {
 	// встреча чужая или данных ещё нет.
 	GetTranscript(ctx context.Context, meetingID, userID uuid.UUID) (string, error)
 	GetSummary(ctx context.Context, meetingID, userID uuid.UUID) (string, error)
+
+	// Search — полнотекстовый поиск по транскрипциям и выжимкам,
+	// только по встречам указанного пользователя.
+	Search(ctx context.Context, userID uuid.UUID, query string) ([]domain.SearchHit, error)
 }
 
 // TaskRepo — задачи обработки. Все переходы атомарны (транзакция 2–транзакция 6),
@@ -85,4 +89,13 @@ type SpeechClient interface {
 type LLMClient interface {
 	Summarize(ctx context.Context, transcript string) (string, error)
 	Answer(ctx context.Context, question, context string) (string, error)
+}
+
+// ChatRepo — хранилище пар «вопрос-ответ».
+type ChatRepo interface {
+	// Save сохраняет пару и заполняет qa.ID, qa.CreatedAt.
+	Save(ctx context.Context, qa *domain.QA) error
+
+	// History — последние N пар по встрече, по убыванию времени.
+	History(ctx context.Context, userID, meetingID uuid.UUID, limit int) ([]domain.QA, error)
 }
