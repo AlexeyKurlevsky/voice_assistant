@@ -77,49 +77,49 @@ created ──► processing ──► transcribed ──► summarized ──�
 
 ## Быстрый старт
 
-Требования: Go 1.23+, PostgreSQL 14+.
+Требования: Go 1.26+ (см. `go.mod`), PostgreSQL 14+.
 
 ```bash
-git clone <repo> && cd meeting-assistant
+git clone <repo> && cd voice-assistant
 cp .env.example .env                       # отредактировать MS_DB_DSN
 make build
 
-createdb ms
-createdb ms_test                           # для интеграционных тестов
+createdb voice_assistant
 make migrate-up
 
-./bin/meeting-assistant --user alice start
-./bin/meeting-assistant --user alice load ./testdata/sample.mp3
-./bin/meeting-assistant --user alice list
-./bin/meeting-assistant --user alice status 1
-./bin/meeting-assistant --user alice get 1
-./bin/meeting-assistant --user alice find "бюджет"
-./bin/meeting-assistant --user alice chat 1 "какие сроки обсудили?"
+# регистрация: токен показывается один раз
+./bin/voice-assistant --user alice start
+# сохраните token из вывода
+./bin/voice-assistant --token "$TOKEN" load ./testdata/sample.txt
+./bin/voice-assistant --token "$TOKEN" list
+./bin/voice-assistant --token "$TOKEN" status <meeting_id>
+./bin/voice-assistant --token "$TOKEN" get <meeting_id>
+./bin/voice-assistant --token "$TOKEN" find "бюджет"
+./bin/voice-assistant --token "$TOKEN" chat <meeting_id> "какие сроки обсудили?"
 ```
 
 ### Пример вывода
 
 ```bash
-$ meeting-assistant --user alice list
-ID   CREATED              STATUS       SUMMARY
-1    2026-11-19 10:12:03  completed    Обсудили бюджет Q1, сроки релиза...
-2    2026-11-19 10:14:41  processing   —
-3    2026-11-19 10:15:02  failed       —
+$ voice-assistant --token "$TOKEN" list
+ID          CREATED              STATUS      SUMMARY
+3a2b5c7d   2026-11-25 10:12:03  completed   Обсудили бюджет Q1, сроки релиза...
+5f8d9e1a   2026-11-25 10:14:41  processing  —
 ```
 
 ```bash
-$ meeting-assistant --user alice status 3
-meeting_id:       3
+$ voice-assistant --token "$TOKEN" status 5f8d9e1a
+meeting_id:       5f8d9e1a
 status:           failed
-created_at:       2026-11-19 10:15:02
-updated_at:       2026-11-19 10:15:09
-error:            speech client: upstream 503
+created_at:       2026-11-25 10:15:02
+updated_at:       2026-11-25 10:15:09
+error:            speech: mock failure (as requested)
 ```
 
 ```bash
-$ meeting-assistant --user alice find "бюджет"
-ID   CREATED              STATUS       SNIPPET
-1    2026-11-19 10:12:03  completed    ...обсудили <бюджет> Q1 и сроки...
+$ voice-assistant --token "$TOKEN" find "бюджет"
+ID          CREATED              STATUS      SNIPPET
+3a2b5c7d   2026-11-25 10:12:03  completed   ...обсудили <бюджет> Q1 и сроки...
 ```
 
 ---
@@ -151,24 +151,23 @@ ID   CREATED              STATUS       SNIPPET
 | Миграции | `golang-migrate/migrate` + `embed.FS` |
 | Логи | `log/slog` (stdlib) |
 | Тесты | `stretchr/testify` |
-| Speech | `mock` (по умолчанию), `whisper` (OpenAI-совместимый) |
-| LLM | `mock` (по умолчанию), `openrouter` (опционально) |
+| Speech | `mock` (по умолчанию), `whisper` (OpenAI-совместимый, план) |
+| LLM | `mock` (по умолчанию), `openrouter` (OpenAI-совместимый, реализован) |
 
 ---
 
 ## Makefile
 
 ```
-make build              # сборка ./bin/meeting-assistant
-make run                # go run ./cmd/meeting-assistant
+make build              # сборка ./bin/voice-assistant
+make run                # go run ./cmd/voice-assistant
 make test               # unit-тесты
 make test-race          # go test -race ./...
-make test-integration   # с TEST_DATABASE_URL
 make migrate-up         # golang-migrate up
 make migrate-down       # golang-migrate down
 make sqlc               # sqlc generate
 make sqlc-check         # sqlc diff (падает, если sqlcgen устарел)
-make lint               # go vet + staticcheck
+make lint               # go vet
 ```
 
 ---
