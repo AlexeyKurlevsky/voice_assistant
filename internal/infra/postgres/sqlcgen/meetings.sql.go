@@ -13,8 +13,8 @@ import (
 )
 
 const createMeeting = `-- name: CreateMeeting :one
-INSERT INTO meetings (user_id, title, original_filename, file_path)
-VALUES ($1, $2, $3, $4)
+INSERT INTO meetings (user_id, title, original_filename, file_path, content_hash)
+VALUES ($1, $2, $3, $4, $5)
 RETURNING id, user_id, title, original_filename, file_path, created_at
 `
 
@@ -23,16 +23,62 @@ type CreateMeetingParams struct {
 	Title            string
 	OriginalFilename string
 	FilePath         string
+	ContentHash      *string
 }
 
-func (q *Queries) CreateMeeting(ctx context.Context, arg CreateMeetingParams) (Meeting, error) {
+type CreateMeetingRow struct {
+	ID               pgtype.UUID
+	UserID           pgtype.UUID
+	Title            string
+	OriginalFilename string
+	FilePath         string
+	CreatedAt        time.Time
+}
+
+func (q *Queries) CreateMeeting(ctx context.Context, arg CreateMeetingParams) (CreateMeetingRow, error) {
 	row := q.db.QueryRow(ctx, createMeeting,
 		arg.UserID,
 		arg.Title,
 		arg.OriginalFilename,
 		arg.FilePath,
+		arg.ContentHash,
 	)
-	var i Meeting
+	var i CreateMeetingRow
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Title,
+		&i.OriginalFilename,
+		&i.FilePath,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getMeetingByContentHashForUser = `-- name: GetMeetingByContentHashForUser :one
+SELECT id, user_id, title, original_filename, file_path, created_at
+FROM meetings
+WHERE user_id = $1 AND content_hash = $2
+LIMIT 1
+`
+
+type GetMeetingByContentHashForUserParams struct {
+	UserID      pgtype.UUID
+	ContentHash *string
+}
+
+type GetMeetingByContentHashForUserRow struct {
+	ID               pgtype.UUID
+	UserID           pgtype.UUID
+	Title            string
+	OriginalFilename string
+	FilePath         string
+	CreatedAt        time.Time
+}
+
+func (q *Queries) GetMeetingByContentHashForUser(ctx context.Context, arg GetMeetingByContentHashForUserParams) (GetMeetingByContentHashForUserRow, error) {
+	row := q.db.QueryRow(ctx, getMeetingByContentHashForUser, arg.UserID, arg.ContentHash)
+	var i GetMeetingByContentHashForUserRow
 	err := row.Scan(
 		&i.ID,
 		&i.UserID,
@@ -51,9 +97,18 @@ JOIN processing_tasks t ON t.meeting_id = m.id
 WHERE t.id = $1
 `
 
-func (q *Queries) GetMeetingByTaskID(ctx context.Context, id pgtype.UUID) (Meeting, error) {
+type GetMeetingByTaskIDRow struct {
+	ID               pgtype.UUID
+	UserID           pgtype.UUID
+	Title            string
+	OriginalFilename string
+	FilePath         string
+	CreatedAt        time.Time
+}
+
+func (q *Queries) GetMeetingByTaskID(ctx context.Context, id pgtype.UUID) (GetMeetingByTaskIDRow, error) {
 	row := q.db.QueryRow(ctx, getMeetingByTaskID, id)
-	var i Meeting
+	var i GetMeetingByTaskIDRow
 	err := row.Scan(
 		&i.ID,
 		&i.UserID,
@@ -76,9 +131,18 @@ type GetMeetingForUserParams struct {
 	UserID pgtype.UUID
 }
 
-func (q *Queries) GetMeetingForUser(ctx context.Context, arg GetMeetingForUserParams) (Meeting, error) {
+type GetMeetingForUserRow struct {
+	ID               pgtype.UUID
+	UserID           pgtype.UUID
+	Title            string
+	OriginalFilename string
+	FilePath         string
+	CreatedAt        time.Time
+}
+
+func (q *Queries) GetMeetingForUser(ctx context.Context, arg GetMeetingForUserParams) (GetMeetingForUserRow, error) {
 	row := q.db.QueryRow(ctx, getMeetingForUser, arg.ID, arg.UserID)
-	var i Meeting
+	var i GetMeetingForUserRow
 	err := row.Scan(
 		&i.ID,
 		&i.UserID,

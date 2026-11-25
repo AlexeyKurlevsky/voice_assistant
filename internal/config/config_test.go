@@ -54,27 +54,27 @@ func TestLoad_UnknownProvider(t *testing.T) {
 
 func TestLoad_OpenRouterRequiresKeyAndModel(t *testing.T) {
 	_, err := loadTestConfig(t, map[string]string{"MS_LLM_PROVIDER": "openrouter"})
-	if err == nil || !strings.Contains(err.Error(), "MS_OPENROUTER_API_KEY") {
+	if err == nil || !strings.Contains(err.Error(), "MS_LLM_API_KEY") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
 	_, err = loadTestConfig(t, map[string]string{
-		"MS_LLM_PROVIDER":       "openrouter",
-		"MS_OPENROUTER_API_KEY": "sk-test",
+		"MS_LLM_PROVIDER": "openrouter",
+		"MS_LLM_API_KEY":  "sk-test",
 	})
-	if err == nil || !strings.Contains(err.Error(), "MS_OPENROUTER_MODEL") {
+	if err == nil || !strings.Contains(err.Error(), "MS_LLM_MODEL") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
 	c, err := loadTestConfig(t, map[string]string{
-		"MS_LLM_PROVIDER":       "openrouter",
-		"MS_OPENROUTER_API_KEY": "sk-test",
-		"MS_OPENROUTER_MODEL":   "deepseek/deepseek-chat",
+		"MS_LLM_PROVIDER": "openrouter",
+		"MS_LLM_API_KEY":  "sk-test",
+		"MS_LLM_MODEL":    "deepseek-chat",
 	})
 	if err != nil {
 		t.Fatalf("LoadWithOptions: %v", err)
 	}
-	if c.LLMAPIKey != "sk-test" || c.LLMModel != "deepseek/deepseek-chat" {
+	if c.LLMAPIKey != "sk-test" || c.LLMModel != "deepseek-chat" {
 		t.Errorf("LLM config = %q/%q", c.LLMAPIKey, c.LLMModel)
 	}
 }

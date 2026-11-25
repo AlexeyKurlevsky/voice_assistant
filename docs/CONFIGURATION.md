@@ -38,7 +38,7 @@
 
 | Переменная | Обязательно | По умолчанию | Описание |
 |---|---|---|---|
-| `MS_UPLOAD_DIR` | нет | `./data/uploads` | Каталог для сохранённых копий файлов. Создаётся при старте (`MkdirAll`). |
+| `MS_UPLOAD_DIR` | нет | `./data/uploads` | Каталог для временных копий загруженных файлов. Создаётся при загрузке; копия удаляется после сохранения транскрипции в БД. |
 | `MS_MAX_UPLOAD_BYTES` | нет | `104857600` (100 MiB) | Максимальный размер загружаемого файла. |
 
 ### 2.3. Обработка
@@ -105,9 +105,9 @@ HTTP-клиент `OpenAICompat` не навешивает собственны�
 
 | Переменная | Обязательно при `openrouter` | Описание |
 |---|---|---|
-| `MS_OPENROUTER_BASE_URL` | нет | Базовый URL OpenAI-совместимого API. По умолчанию `https://openrouter.ai/api/v1`. |
-| `MS_OPENROUTER_API_KEY` | да | Bearer-ключ. |
-| `MS_OPENROUTER_MODEL` | да | Модель, например `deepseek/deepseek-chat`, `anthropic/claude-3.5-sonnet`. |
+| `MS_LLM_BASE_URL` | нет | Базовый URL OpenAI-совместимого API. По умолчанию `https://openrouter.ai/api/v1`; для DeepSeek — `https://api.deepseek.com`. |
+| `MS_LLM_API_KEY` | да | Bearer-ключ. |
+| `MS_LLM_MODEL` | да | Модель, например `deepseek-chat` (DeepSeek) или `deepseek/deepseek-chat` (OpenRouter). |
 
 Если ключ или модель пусты — `config.Load` возвращает ошибку.
 
@@ -120,7 +120,7 @@ HTTP-клиент `OpenAICompat` не навешивает собственны�
 
 `text` удобен для локальной разработки, `json` — для сбора логов.
 
-**Что не логируется никогда:** `MS_WHISPER_API_KEY`, `MS_OPENROUTER_API_KEY`,
+**Что не логируется никогда:** `MS_WHISPER_API_KEY`, `MS_LLM_API_KEY`,
 содержимое транскрипций, тела ответов внешних API.
 
 ---
@@ -189,9 +189,9 @@ MS_LLM_PROVIDER=mock
 MS_MOCK_SPEECH_DELAY=2s
 
 # --- LLM: OpenRouter ---
-MS_OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
-MS_OPENROUTER_API_KEY=
-MS_OPENROUTER_MODEL=
+MS_LLM_BASE_URL=https://openrouter.ai/api/v1
+MS_LLM_API_KEY=
+MS_LLM_MODEL=
 MS_MOCK_LLM_DELAY=1s
 
 # --- Аутентификация ---
@@ -202,8 +202,8 @@ MS_LOG_LEVEL=info
 MS_LOG_FORMAT=text
 ```
 
-Для переключения LLM на OpenRouter нужно задать
-`MS_OPENROUTER_API_KEY`/`MS_OPENROUTER_MODEL` и поставить
+Для переключения LLM на реальный провайдер нужно задать
+`MS_LLM_API_KEY`/`MS_LLM_MODEL` и поставить
 `MS_LLM_PROVIDER=openrouter`.
 
 ---
@@ -227,8 +227,8 @@ make test-integration
 
 ## 6. Что заменить для перехода на реальные провайдеры
 
-1. LLM: установить `MS_LLM_PROVIDER=openrouter`, `MS_OPENROUTER_API_KEY`
-   и `MS_OPENROUTER_MODEL` (OpenAI-совместимая обёртка уже реализована).
+1. LLM: установить `MS_LLM_PROVIDER=openrouter`, `MS_LLM_API_KEY`
+   и `MS_LLM_MODEL` (OpenAI-совместимая обёртка уже реализована).
 2. Speech: whisper — в плане; сейчас доступен только `mock`.
 3. Перезапустить приложение.
 

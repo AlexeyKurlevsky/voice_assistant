@@ -40,7 +40,7 @@ Unit-тесты работают с интерфейсами `application.*Repo`
 |---|---|
 | `internal/domain` | `Status.IsValid`, `Status.IsTerminal` |
 | `internal/application` | `UserService` (Register, валидация external_id, Auth, Rotate); `MeetingService` (Load: успех/файл не найден/расширение/переполнение очереди, нормализация пагинации, пустой find, transcript); `ChatService` (completed-гейт, пустой вопрос, not found, ошибка LLM); `WorkerPool` (enqueue успех/полный/после Stop, идемпотентность Stop, лимит параллелизма) |
-| `internal/config` | дефолты, обязательный DSN, невалидный провайдер, обязательные `MS_OPENROUTER_API_KEY`/`MODEL`, `MS_WORKER_CONCURRENCY` |
+| `internal/config` | дефолты, обязательный DSN, невалидный провайдер, обязательные `MS_LLM_API_KEY`/`MS_LLM_MODEL`, `MS_WORKER_CONCURRENCY` |
 | `internal/infra/speech` | mock: `.txt`, `.json`, `fail`, аудио-заглушка, отмена контекста |
 | `internal/infra/llm` | mock (`Summarize`/`Answer`, пустые входы, отмена); `OpenAICompat` (`httptest`: тело запроса, Bearer, ошибка API, пустые choices, отмена до/во время запроса, валидация, выбор провайдера) |
 | `internal/worker` | полный pipeline, ошибка speech → failed, recovery из `summarized`/`transcribed`, пропуск терминальных |

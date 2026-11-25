@@ -2,6 +2,9 @@ package application
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -52,33 +55,56 @@ func NewMeetingService(
 	}
 }
 
-// Load: валидация → копия файла → TX создания meeting+task (T1) → Enqueue.
+// Load: валидация → SHA-256 → дедупликация → копия → TX meeting+task → Enqueue.
+//
+// Возвращает (meeting, task, alreadyLoaded, error): alreadyLoaded=true, если
+// файл с таким хэшем у пользователя уже есть — тогда новая встреча/задача
+// не создаются, а возвращается существующая.
 //
 // При ErrQueueFull задача помечается failed (с отдельным контекстом,
-// чтобы пережить уже отменённый ctx). Скопированный файл не удаляется —
-// для аудита.
-func (s *MeetingService) Load(ctx context.Context, userID uuid.UUID, srcPath string) (*domain.Meeting, *domain.Task, error) {
+// чтобы пережить уже отменённый ctx), а скопированный файл удаляется —
+// задача не попадёт в обработку. При успешном запуске копию удаляет воркер
+// после сохранения транскрипции в БД (см. worker/processor.go).
+func (s *MeetingService) Load(ctx context.Context, userID uuid.UUID, srcPath string) (*domain.Meeting, *domain.Task, bool, error) {
 	info, err := os.Stat(srcPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, nil, fmt.Errorf("%w: file not found: %s", domain.ErrInvalidArgument, srcPath)
+			return nil, nil, false, fmt.Errorf("%w: file not found: %s", domain.ErrInvalidArgument, srcPath)
 		}
-		return nil, nil, fmt.Errorf("meeting_service.Load: stat: %w", err)
+		return nil, nil, false, fmt.Errorf("meeting_service.Load: stat: %w", err)
 	}
 	if info.IsDir() {
-		return nil, nil, fmt.Errorf("%w: path is a directory: %s", domain.ErrInvalidArgument, srcPath)
+		return nil, nil, false, fmt.Errorf("%w: path is a directory: %s", domain.ErrInvalidArgument, srcPath)
 	}
 	if info.Size() > s.maxBytes {
-		return nil, nil, fmt.Errorf("%w: file too large: %d > %d bytes",
+		return nil, nil, false, fmt.Errorf("%w: file too large: %d > %d bytes",
 			domain.ErrInvalidArgument, info.Size(), s.maxBytes)
 	}
 	ext := strings.ToLower(filepath.Ext(srcPath))
 	if !allowedExt[ext] {
-		return nil, nil, fmt.Errorf("%w: unsupported file type: %s", domain.ErrInvalidArgument, ext)
+		return nil, nil, false, fmt.Errorf("%w: unsupported file type: %s", domain.ErrInvalidArgument, ext)
+	}
+
+	hash, err := fileSHA256(srcPath)
+	if err != nil {
+		return nil, nil, false, fmt.Errorf("meeting_service.Load: hash: %w", err)
+	}
+
+	// Дедупликация: этот файл у пользователя уже загружен.
+	if existing, err := s.meetingRepo.GetByContentHashForUser(ctx, userID, hash); err == nil {
+		task, terr := s.taskRepo.GetByMeetingIDForUser(ctx, existing.ID, userID)
+		if terr != nil {
+			return nil, nil, false, fmt.Errorf("meeting_service.Load: existing task: %w", terr)
+		}
+		s.log.Info("meeting_service.Load: duplicate file",
+			"meeting_id", existing.ID, "content_hash", hash)
+		return existing, task, true, nil
+	} else if !errors.Is(err, domain.ErrNotFound) {
+		return nil, nil, false, fmt.Errorf("meeting_service.Load: hash lookup: %w", err)
 	}
 
 	if err := os.MkdirAll(s.uploadDir, 0o755); err != nil {
-		return nil, nil, fmt.Errorf("meeting_service.Load: mkdir upload: %w", err)
+		return nil, nil, false, fmt.Errorf("meeting_service.Load: mkdir upload: %w", err)
 	}
 
 	// Имя в uploadDir — UUID: нет коллизий между пользователями,
@@ -86,7 +112,7 @@ func (s *MeetingService) Load(ctx context.Context, userID uuid.UUID, srcPath str
 	relPath := uuid.NewString() + ext
 	dstPath := filepath.Join(s.uploadDir, relPath)
 	if err := copyFile(srcPath, dstPath); err != nil {
-		return nil, nil, fmt.Errorf("meeting_service.Load: copy: %w", err)
+		return nil, nil, false, fmt.Errorf("meeting_service.Load: copy: %w", err)
 	}
 
 	title := strings.TrimSuffix(filepath.Base(srcPath), ext)
@@ -95,14 +121,16 @@ func (s *MeetingService) Load(ctx context.Context, userID uuid.UUID, srcPath str
 		Title:            title,
 		OriginalFilename: filepath.Base(srcPath),
 		FilePath:         relPath,
+		ContentHash:      hash,
 	}
 	task, err := s.meetingRepo.CreateWithTask(ctx, m)
 	if err != nil {
 		_ = os.Remove(dstPath) // записи в БД нет — файл «осиротел»
-		return nil, nil, fmt.Errorf("meeting_service.Load: create: %w", err)
+		return nil, nil, false, fmt.Errorf("meeting_service.Load: create: %w", err)
 	}
 
 	if err := s.enqueuer.Enqueue(ctx, task.ID); err != nil {
+		_ = os.Remove(dstPath) // задача не попадёт в обработку — копия не нужна
 		// Отдельный контекст: если ctx уже отменён (shutdown),
 		// MarkFailed всё равно должен пройти.
 		failCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -111,10 +139,10 @@ func (s *MeetingService) Load(ctx context.Context, userID uuid.UUID, srcPath str
 			s.log.Warn("meeting_service.Load: mark failed after enqueue error",
 				"task_id", task.ID, "err", ferr)
 		}
-		return nil, nil, fmt.Errorf("meeting_service.Load: enqueue: %w", err)
+		return nil, nil, false, fmt.Errorf("meeting_service.Load: enqueue: %w", err)
 	}
 
-	return m, task, nil
+	return m, task, false, nil
 }
 
 // List с нормализацией limit (≤0 или >500 → 50) и offset (<0 → 0).
@@ -152,6 +180,21 @@ func copyFile(src, dst string) error {
 		return err
 	}
 	return out.Sync()
+}
+
+// fileSHA256 возвращает SHA-256 содержимого файла в hex (64 символа).
+func fileSHA256(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // Status возвращает задачу обработки встречи с проверкой прав.

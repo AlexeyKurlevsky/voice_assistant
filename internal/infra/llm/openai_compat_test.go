@@ -200,8 +200,8 @@ func TestNewOpenAICompat_Validation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewOpenAICompat with defaults: %v", err)
 	}
-	if c.baseURL != defaultOpenRouterBaseURL {
-		t.Errorf("baseURL = %q, want %q", c.baseURL, defaultOpenRouterBaseURL)
+	if c.baseURL != defaultLLMBaseURL {
+		t.Errorf("baseURL = %q, want %q", c.baseURL, defaultLLMBaseURL)
 	}
 }
 

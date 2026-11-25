@@ -123,6 +123,9 @@ func (f *fakeMeetingRepo) GetByTaskID(_ context.Context, _ uuid.UUID) (*domain.M
 	}
 	return f.meeting, nil
 }
+func (f *fakeMeetingRepo) GetByContentHashForUser(_ context.Context, _ uuid.UUID, _ string) (*domain.Meeting, error) {
+	return nil, domain.ErrNotFound
+}
 func (f *fakeMeetingRepo) GetTranscript(_ context.Context, _, _ uuid.UUID) (string, error) {
 	if f.transcript == "" {
 		return "", domain.ErrNotFound

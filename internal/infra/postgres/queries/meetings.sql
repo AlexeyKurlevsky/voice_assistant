@@ -1,7 +1,13 @@
 -- name: CreateMeeting :one
-INSERT INTO meetings (user_id, title, original_filename, file_path)
-VALUES ($1, $2, $3, $4)
+INSERT INTO meetings (user_id, title, original_filename, file_path, content_hash)
+VALUES ($1, $2, $3, $4, $5)
 RETURNING id, user_id, title, original_filename, file_path, created_at;
+
+-- name: GetMeetingByContentHashForUser :one
+SELECT id, user_id, title, original_filename, file_path, created_at
+FROM meetings
+WHERE user_id = $1 AND content_hash = $2
+LIMIT 1;
 
 -- name: ListMeetingsByUser :many
 SELECT m.id, m.title, m.created_at,

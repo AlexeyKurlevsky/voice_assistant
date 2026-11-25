@@ -15,6 +15,7 @@ type Meeting struct {
 	Title            string
 	OriginalFilename string
 	FilePath         string
+	ContentHash      string // SHA-256 содержимого файла (дедупликация)
 	CreatedAt        time.Time
 }
 

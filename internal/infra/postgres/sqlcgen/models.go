@@ -25,6 +25,7 @@ type Meeting struct {
 	Title            string
 	OriginalFilename string
 	FilePath         string
+	ContentHash      *string
 	CreatedAt        time.Time
 }
 

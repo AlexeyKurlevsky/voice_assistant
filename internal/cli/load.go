@@ -18,17 +18,23 @@ func newLoadCmd(deps *Deps, userID *string, jsonOut *bool) *cobra.Command {
 
 			u := mustUser(ctx)
 
-			m, t, err := deps.MeetingService.Load(ctx, u.ID, args[0])
+			m, t, alreadyLoaded, err := deps.MeetingService.Load(ctx, u.ID, args[0])
 			if err != nil {
 				return err
 			}
 			if *jsonOut {
 				return json.NewEncoder(cmd.OutOrStdout()).Encode(struct {
-					MeetingID string `json:"meeting_id"`
-					Status    string `json:"status"`
-				}{m.ID.String(), string(t.Status)})
+					MeetingID     string `json:"meeting_id"`
+					Status        string `json:"status"`
+					AlreadyLoaded bool   `json:"already_loaded,omitempty"`
+				}{m.ID.String(), string(t.Status), alreadyLoaded})
 			}
 
+			if alreadyLoaded {
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(),
+					"already loaded\nmeeting_id: %s\nstatus: %s\n", m.ID, t.Status)
+				return nil
+			}
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(),
 				"meeting_id: %s\nstatus: %s\n", m.ID, t.Status)
 			return nil

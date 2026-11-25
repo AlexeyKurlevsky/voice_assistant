@@ -100,9 +100,11 @@ CREATE TABLE meetings (
     title             TEXT        NOT NULL,
     original_filename TEXT        NOT NULL,
     file_path         TEXT        NOT NULL,
+    content_hash      TEXT,
     created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX idx_meetings_user_created ON meetings (user_id, created_at DESC);
+CREATE INDEX idx_meetings_user_content_hash ON meetings (user_id, content_hash);
 ```
 
 | Поле | Назначение |
@@ -110,6 +112,7 @@ CREATE INDEX idx_meetings_user_created ON meetings (user_id, created_at DESC);
 | `title` | Отображаемое название. По умолчанию — `basename(path)` без расширения. |
 | `original_filename` | Имя загруженного файла (аудит). |
 | `file_path` | Путь к сохранённой копии в `MS_UPLOAD_DIR`. Относительный от корня проекта. |
+| `content_hash` | SHA-256 содержимого файла (hex). Используется для дедупликации: повторная загрузка того же файла пользователем возвращает существующую встречу. `NULL` для встреч, созданных до миграции `0003`. |
 
 `ON DELETE CASCADE` от `users` — упрощает очистку в тестах; в реальной
 эксплуатации удаление пользователя не предусмотрено.

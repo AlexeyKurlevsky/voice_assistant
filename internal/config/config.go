@@ -79,9 +79,9 @@ func LoadWithOptions(opts LoadOptions) (*Config, error) {
 		LLMTimeout:        getEnvDuration("MS_LLM_TIMEOUT", 60*time.Second),
 		SpeechProvider:    getEnv("MS_SPEECH_PROVIDER", "mock"),
 		LLMProvider:       getEnv("MS_LLM_PROVIDER", "mock"),
-		LLMBaseURL:        getEnv("MS_OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
-		LLMAPIKey:         os.Getenv("MS_OPENROUTER_API_KEY"),
-		LLMModel:          getEnv("MS_OPENROUTER_MODEL", ""),
+		LLMBaseURL:        getEnv("MS_LLM_BASE_URL", "https://openrouter.ai/api/v1"),
+		LLMAPIKey:         os.Getenv("MS_LLM_API_KEY"),
+		LLMModel:          getEnv("MS_LLM_MODEL", ""),
 		MockSpeechDelay:   getEnvDuration("MS_MOCK_SPEECH_DELAY", 2*time.Second),
 		MockLLMDelay:      getEnvDuration("MS_MOCK_LLM_DELAY", 1*time.Second),
 		Token:             token,
@@ -119,10 +119,10 @@ func LoadWithOptions(opts LoadOptions) (*Config, error) {
 	}
 	if c.LLMProvider == "openrouter" {
 		if c.LLMAPIKey == "" {
-			return nil, fmt.Errorf("config: MS_OPENROUTER_API_KEY is required when MS_LLM_PROVIDER=openrouter")
+			return nil, fmt.Errorf("config: MS_LLM_API_KEY is required when MS_LLM_PROVIDER=openrouter")
 		}
 		if c.LLMModel == "" {
-			return nil, fmt.Errorf("config: MS_OPENROUTER_MODEL is required when MS_LLM_PROVIDER=openrouter")
+			return nil, fmt.Errorf("config: MS_LLM_MODEL is required when MS_LLM_PROVIDER=openrouter")
 		}
 	}
 	return c, nil

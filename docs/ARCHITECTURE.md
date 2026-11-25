@@ -152,10 +152,17 @@ sequenceDiagram
     U->>CLI: load ./audio.mp3
     CLI->>MS: Load(ctx, userID, path)
     MS->>MS: validateFile(path)
+    MS->>MS: sha256(file)
+    MS->>MR: GetByContentHashForUser(userID, hash)
+    alt файл уже загружен
+        MR-->>MS: existing Meeting
+        MS-->>CLI: already loaded (meeting_id, status)
+    else новый файл
     MS->>FS: saveCopy(uploadDir/uuid.mp3)
     MS->>MR: CreateWithTask(ctx, meeting) — транзакция
     MR-->>MS: *Task (status=created)
     MS->>Q: Enqueue(ctx, task.ID)
+    end
     alt очередь переполнена
         Q-->>MS: ErrQueueFull
         MS->>MR: MarkFailed(ctx, task.ID, "queue full")
@@ -165,6 +172,12 @@ sequenceDiagram
         MS-->>CLI: meeting_id, status=created
     end
 ```
+
+Перед копированием и созданием встречи сервис считает SHA-256 содержимого
+файла и проверяет `GetByContentHashForUser`: если встреча с таким хэшем у
+пользователя уже есть — возвращает её, не создавая новую задачу и не вызывая
+внешние API. Это защищает от повторной траты токенов при повторной загрузке
+того же файла.
 
 ### 4.3. Асинхронная обработка
 
@@ -192,6 +205,10 @@ flowchart TD
 
 Каждый переход статуса — в транзакции; каждая транзакция включает запись
 в `status_history`. Подробности — в [`STATUS_MODEL.md`](STATUS_MODEL.md).
+
+После `SaveTranscriptionAndMarkTranscribed` локальная копия файла из
+`MS_UPLOAD_DIR` удаляется — последующие шаги и восстановление используют
+текст транскрипции из БД, а не исходный файл.
 
 Отмена родительского контекста (SIGTERM/SIGINT) прерывает текущий шаг;
 для текущей задачи выполняется `MarkFailed(..., "shutdown")` с отдельным
@@ -301,7 +318,7 @@ llmClient, err := llm.New(cfg.LLMProvider, llm.Options{
 
 Фабрики в `infra/*/factory.go`. Замена реализаций — только env:
 `MS_SPEECH_PROVIDER=whisper` (план) или `MS_LLM_PROVIDER=openrouter`
-(реализовано, модель через `MS_OPENROUTER_MODEL`). Бизнес-логика не меняется.
+(реализовано, модель через `MS_LLM_MODEL`). Бизнес-логика не меняется.
 
 ---
 

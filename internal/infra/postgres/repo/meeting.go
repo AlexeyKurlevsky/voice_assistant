@@ -41,6 +41,7 @@ func (r *MeetingRepo) CreateWithTask(ctx context.Context, m *domain.Meeting) (*d
 		Title:            m.Title,
 		OriginalFilename: m.OriginalFilename,
 		FilePath:         m.FilePath,
+		ContentHash:      &m.ContentHash,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("meeting_repo.CreateWithTask: insert meeting: %w", err)
@@ -74,6 +75,29 @@ func (r *MeetingRepo) CreateWithTask(ctx context.Context, m *domain.Meeting) (*d
 		Attempts:  int(tRow.Attempts),
 		CreatedAt: tRow.CreatedAt,
 		UpdatedAt: tRow.UpdatedAt,
+	}, nil
+}
+
+// GetByContentHashForUser — встреча пользователя по SHA-256 содержимого.
+// ErrNotFound, если встречи с таким хэшем нет.
+func (r *MeetingRepo) GetByContentHashForUser(ctx context.Context, userID uuid.UUID, contentHash string) (*domain.Meeting, error) {
+	row, err := r.q.GetMeetingByContentHashForUser(ctx, sqlcgen.GetMeetingByContentHashForUserParams{
+		UserID:      toPgUUID(userID),
+		ContentHash: &contentHash,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, domain.ErrNotFound
+		}
+		return nil, fmt.Errorf("meeting_repo.GetByContentHashForUser: %w", err)
+	}
+	return &domain.Meeting{
+		ID:               toUUID(row.ID),
+		UserID:           toUUID(row.UserID),
+		Title:            row.Title,
+		OriginalFilename: row.OriginalFilename,
+		FilePath:         row.FilePath,
+		CreatedAt:        row.CreatedAt,
 	}, nil
 }
 

@@ -46,6 +46,10 @@ type MeetingRepo interface {
 	// «нет», и для «чужая»).
 	GetByIDForUser(ctx context.Context, meetingID, userID uuid.UUID) (*domain.Meeting, error)
 
+	// GetByContentHashForUser — встреча пользователя по SHA-256 содержимого.
+	// ErrNotFound, если встречи с таким хэшем нет.
+	GetByContentHashForUser(ctx context.Context, userID uuid.UUID, contentHash string) (*domain.Meeting, error)
+
 	// GetByTaskID — для фонового processor'а; без проверки прав.
 	GetByTaskID(ctx context.Context, taskID uuid.UUID) (*domain.Meeting, error)
 

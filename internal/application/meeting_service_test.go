@@ -16,16 +16,17 @@ import (
 )
 
 type fakeMeetingRepo struct {
-	createErr  error
-	created    *domain.Meeting
-	list       []domain.MeetingListItem
-	listLimit  int
-	listOffset int
-	byID       *domain.Meeting
-	byTaskID   *domain.Meeting
-	transcript string
-	summary    string
-	search     []domain.SearchHit
+	createErr      error
+	created        *domain.Meeting
+	list           []domain.MeetingListItem
+	listLimit      int
+	listOffset     int
+	byID           *domain.Meeting
+	byTaskID       *domain.Meeting
+	existingByHash *domain.Meeting
+	transcript     string
+	summary        string
+	search         []domain.SearchHit
 }
 
 func (f *fakeMeetingRepo) CreateWithTask(_ context.Context, m *domain.Meeting) (*domain.Task, error) {
@@ -56,6 +57,13 @@ func (f *fakeMeetingRepo) GetByTaskID(_ context.Context, _ uuid.UUID) (*domain.M
 		return nil, domain.ErrNotFound
 	}
 	return f.byTaskID, nil
+}
+
+func (f *fakeMeetingRepo) GetByContentHashForUser(_ context.Context, _ uuid.UUID, _ string) (*domain.Meeting, error) {
+	if f.existingByHash == nil {
+		return nil, domain.ErrNotFound
+	}
+	return f.existingByHash, nil
 }
 
 func (f *fakeMeetingRepo) GetTranscript(_ context.Context, _, _ uuid.UUID) (string, error) {
@@ -148,9 +156,15 @@ func TestMeetingService_Load_Success(t *testing.T) {
 	svc := NewMeetingService(meetingRepo, taskRepo, enq, t.TempDir(), 1024*1024, discardLogger())
 
 	path := writeTempFile(t, "meeting.txt", "текст встречи")
-	m, task, err := svc.Load(context.Background(), uuid.New(), path)
+	m, task, alreadyLoaded, err := svc.Load(context.Background(), uuid.New(), path)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
+	}
+	if alreadyLoaded {
+		t.Error("fresh file must not be marked as already loaded")
+	}
+	if len(m.ContentHash) != 64 {
+		t.Errorf("ContentHash = %q, want 64 hex chars", m.ContentHash)
 	}
 	if m.ID == uuid.Nil {
 		t.Error("meeting ID must be set")
@@ -166,9 +180,44 @@ func TestMeetingService_Load_Success(t *testing.T) {
 	}
 }
 
+func TestMeetingService_Load_Duplicate(t *testing.T) {
+	existingID := uuid.New()
+	taskID := uuid.New()
+	meetingRepo := &fakeMeetingRepo{
+		existingByHash: &domain.Meeting{
+			ID: existingID, UserID: uuid.New(), Title: "sample",
+			OriginalFilename: "sample.txt", FilePath: "old.txt",
+		},
+	}
+	taskRepo := &fakeTaskRepo{task: &domain.Task{ID: taskID, MeetingID: existingID, Status: domain.StatusCompleted}}
+	enq := &fakeEnqueuer{}
+	svc := NewMeetingService(meetingRepo, taskRepo, enq, t.TempDir(), 1024, discardLogger())
+
+	path := writeTempFile(t, "sample.txt", "same content")
+	m, task, alreadyLoaded, err := svc.Load(context.Background(), uuid.New(), path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !alreadyLoaded {
+		t.Error("expected alreadyLoaded=true")
+	}
+	if m.ID != existingID {
+		t.Errorf("meeting ID = %s, want %s", m.ID, existingID)
+	}
+	if task.ID != taskID {
+		t.Errorf("task ID = %s, want %s", task.ID, taskID)
+	}
+	if meetingRepo.created != nil {
+		t.Error("duplicate must not create a new meeting")
+	}
+	if enq.enqueued != uuid.Nil {
+		t.Error("duplicate must not be enqueued")
+	}
+}
+
 func TestMeetingService_Load_FileNotFound(t *testing.T) {
 	svc := NewMeetingService(&fakeMeetingRepo{}, &fakeTaskRepo{}, &fakeEnqueuer{}, t.TempDir(), 1024, discardLogger())
-	_, _, err := svc.Load(context.Background(), uuid.New(), filepath.Join(t.TempDir(), "nope.txt"))
+	_, _, _, err := svc.Load(context.Background(), uuid.New(), filepath.Join(t.TempDir(), "nope.txt"))
 	if !errors.Is(err, domain.ErrInvalidArgument) {
 		t.Fatalf("err = %v, want ErrInvalidArgument", err)
 	}
@@ -177,7 +226,7 @@ func TestMeetingService_Load_FileNotFound(t *testing.T) {
 func TestMeetingService_Load_UnsupportedExt(t *testing.T) {
 	svc := NewMeetingService(&fakeMeetingRepo{}, &fakeTaskRepo{}, &fakeEnqueuer{}, t.TempDir(), 1024, discardLogger())
 	path := writeTempFile(t, "doc.pdf", "x")
-	_, _, err := svc.Load(context.Background(), uuid.New(), path)
+	_, _, _, err := svc.Load(context.Background(), uuid.New(), path)
 	if !errors.Is(err, domain.ErrInvalidArgument) {
 		t.Fatalf("err = %v, want ErrInvalidArgument", err)
 	}
@@ -190,7 +239,7 @@ func TestMeetingService_Load_QueueFull(t *testing.T) {
 		&fakeEnqueuer{err: domain.ErrQueueFull}, t.TempDir(), 1024, discardLogger())
 
 	path := writeTempFile(t, "meeting.txt", "x")
-	_, _, err := svc.Load(context.Background(), uuid.New(), path)
+	_, _, _, err := svc.Load(context.Background(), uuid.New(), path)
 	if !errors.Is(err, domain.ErrQueueFull) {
 		t.Fatalf("err = %v, want ErrQueueFull", err)
 	}

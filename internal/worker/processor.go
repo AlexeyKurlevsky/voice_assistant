@@ -121,6 +121,13 @@ func process(
 		if err := taskRepo.SaveTranscriptionAndMarkTranscribed(ctx, taskID, transcript); err != nil {
 			return fail(ctx, taskRepo, taskID, fmt.Errorf("save transcription: %w", err), log)
 		}
+
+		// Транскрипция сохранена в БД — локальная копия файла больше не нужна.
+		// Дальнейшие шаги (summarize, recovery) работают с транскрипцией из БД.
+		if err := os.Remove(filePath); err != nil && !os.IsNotExist(err) {
+			log.Warn("worker: remove upload after transcription",
+				"meeting_id", meeting.ID, "path", filePath, "err", err)
+		}
 	}
 
 	// LLM: выжимка.

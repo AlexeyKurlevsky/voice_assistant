@@ -11,9 +11,11 @@ CREATE TABLE meetings (
     title             TEXT        NOT NULL,
     original_filename TEXT        NOT NULL,
     file_path         TEXT        NOT NULL,
+    content_hash      TEXT,
     created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX idx_meetings_user_created ON meetings (user_id, created_at DESC);
+CREATE INDEX idx_meetings_user_content_hash ON meetings (user_id, content_hash);
 
 CREATE TABLE processing_tasks (
     id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),

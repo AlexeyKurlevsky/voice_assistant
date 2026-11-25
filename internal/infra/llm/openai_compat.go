@@ -14,9 +14,10 @@ import (
 // не аллоцировать неограниченно при сбое на стороне провайдера.
 const maxBodyBytes = 4 << 20 // 4 MiB
 
-// defaultOpenRouterBaseURL — базовый URL OpenRouter.
+// defaultLLMBaseURL — базовый URL по умолчанию (OpenRouter).
 // Endpoint строится как baseURL + "/chat/completions".
-const defaultOpenRouterBaseURL = "https://openrouter.ai/api/v1"
+// Для DeepSeek задайте MS_LLM_BASE_URL=https://api.deepseek.com.
+const defaultLLMBaseURL = "https://openrouter.ai/api/v1"
 
 // OpenAICompat — универсальный LLM-клиент поверх OpenAI-совместимого
 // /chat/completions API. Работает с OpenRouter, DeepSeek, Groq и любым
@@ -34,7 +35,8 @@ type OpenAICompat struct {
 }
 
 // NewOpenAICompat создаёт OpenAI-совместимый клиент.
-// apiKey и model обязательны; baseURL имеет дефолт OpenRouter.
+// apiKey и model обязательны; baseURL имеет дефолт
+// (OpenRouter; переопределяется через MS_LLM_BASE_URL).
 // client можно передать nil — тогда используется &http.Client{}.
 func NewOpenAICompat(baseURL, apiKey, model string, client *http.Client) (*OpenAICompat, error) {
 	if strings.TrimSpace(apiKey) == "" {
@@ -44,7 +46,7 @@ func NewOpenAICompat(baseURL, apiKey, model string, client *http.Client) (*OpenA
 		return nil, fmt.Errorf("openai compat: model is required")
 	}
 	if strings.TrimSpace(baseURL) == "" {
-		baseURL = defaultOpenRouterBaseURL
+		baseURL = defaultLLMBaseURL
 	}
 	if client == nil {
 		client = &http.Client{}
@@ -93,10 +95,12 @@ func (c *OpenAICompat) Summarize(ctx context.Context, transcript string) (string
 	return c.complete(ctx, []chatMessage{
 		{
 			Role: "system",
-			Content: "Ты — ассистент для конспектирования встреч. " +
-				"По переданной транскрипции составь краткую выжимку: " +
-				"ключевые темы, договорённости, сроки и ответственных. " +
-				"Отвечай только по тексту, без домыслов. Пиши по-русски.",
+			Content: "Ты — ассистент для конспектирования встреч, совещаний, " +
+				"вебинаров и любых других устных мероприятий. По переданной " +
+				"транскрипции составь краткую выжимку: основные темы, ключевые " +
+				"тезисы и выводы. Если в тексте есть договорённости, сроки, " +
+				"ответственные или следующие шаги — перечисли их. Не придумывай " +
+				"то, чего нет в тексте. Пиши по-русски.",
 		},
 		{Role: "user", Content: transcript},
 	})
