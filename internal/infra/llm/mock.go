@@ -1,6 +1,7 @@
 // Package llm содержит реализации application.LLMClient.
-// mock — для тестов и локальной разработки; реальные провайдеры
-// (openrouter) выбираются через factory.New по env MS_LLM_PROVIDER.
+// mock — для тестов и локальной разработки; реальный провайдер
+// (openrouter, OpenAI-совместимый) выбирается через factory.New
+// по env MS_LLM_PROVIDER.
 package llm
 
 import (

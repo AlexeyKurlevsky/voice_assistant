@@ -84,7 +84,7 @@ CREATE TABLE users (
 
 | Поле | Назначение |
 |---|---|
-| `external_id` | Идентификатор пользователя из CLI (`--user alice`). `UNIQUE` — идемпотентный `EnsureExists`. |
+| `external_id` | Идентификатор пользователя из CLI (`--user alice`). `UNIQUE` — дубликат при `Register` даёт `ErrAlreadyExists`. |
 | `created_at` | Момент регистрации. |
 
 `external_id` — единственный идентификатор, который видит пользователь.

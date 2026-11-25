@@ -78,7 +78,8 @@ internal/
         meeting.go
         task.go
     speech/                        mock.go, factory.go (+ whisper в будущем)
-    llm/                           mock.go, factory.go (+ openrouter в будущем)
+    llm/                           mock.go, openai_compat.go, factory.go
+                                   (OpenAI-совместимый клиент, провайдер openrouter)
   worker/
     processor.go                   pipeline: transcribe → summarize → finalize
   cli/
@@ -126,14 +127,16 @@ sequenceDiagram
     participant R as UserRepo
 
     U->>CLI: voice-assistant --user alice start
-    CLI->>SVC: EnsureExists(ctx, "alice")
-    SVC->>R: EnsureExists(ctx, "alice")
+    CLI->>SVC: Register(ctx, "alice")
+    SVC->>R: Create(ctx, externalID, tokenHash)
     R-->>SVC: *User
-    SVC-->>CLI: *User
-    CLI-->>U: user_id=<uuid>
+    SVC-->>CLI: *User + token
+    CLI-->>U: user_id=<uuid>, token=<hex>
 ```
 
-`INSERT ... ON CONFLICT (external_id) DO UPDATE SET external_id = EXCLUDED.external_id RETURNING ...` — идемпотентно.
+`UserRepo.Create` — обычный `INSERT` с `UNIQUE (external_id)` и
+`UNIQUE (token_hash)`. Дубликат ловится как `pg`-ошибка `23505` и
+маппится в `domain.ErrAlreadyExists` (см. `repo/user.go`).
 
 ### 4.2. Загрузка и постановка в очередь
 
@@ -290,11 +293,15 @@ speechClient, err := speech.New(cfg.SpeechProvider, speech.Options{
 })
 llmClient, err := llm.New(cfg.LLMProvider, llm.Options{
     MockDelay: cfg.MockLLMDelay,
+    BaseURL:   cfg.LLMBaseURL,
+    APIKey:    cfg.LLMAPIKey,
+    Model:     cfg.LLMModel,
 })
 ```
 
-Фабрики в `infra/*/factory.go`. Замена `mock → whisper` — только
-env (`MS_SPEECH_PROVIDER=whisper` + ключ). Бизнес-логика не меняется.
+Фабрики в `infra/*/factory.go`. Замена реализаций — только env:
+`MS_SPEECH_PROVIDER=whisper` (план) или `MS_LLM_PROVIDER=openrouter`
+(реализовано, модель через `MS_OPENROUTER_MODEL`). Бизнес-логика не меняется.
 
 ---
 

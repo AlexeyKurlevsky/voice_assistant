@@ -1,39 +1,48 @@
 # CLI-команды
 
 Документ фиксирует контракт CLI: синтаксис, флаги, формат вывода, коды
-возврата и поведение при ошибках.
+возврата и поведение при ошибках. Бинарник называется `voice-assistant`.
+
+Конфигурация загружается из `.env` и переменных окружения (см.
+[`CONFIGURATION.md`](CONFIGURATION.md)); отдельного флага `--config` нет.
 
 ---
 
-## 1. Общие флаги
+## 1. Аутентификация
 
-Флаги корневой команды — общие для всех подкоманд:
+`start` создаёт пользователя и **один раз** показывает session-токен
+(64 hex-символа). В базе хранится только SHA-256 токена.
 
-| Флаг | Обязательный | По умолчанию | Назначение |
-|---|---|---|---|
-| `--user <id>` | да | — | `external_id` пользователя. При первом использовании пользователь создаётся автоматически. |
-| `--json` | нет | `false` | Вывод в JSON вместо таблицы. |
-| `--verbose` | нет | `false` | Дополнительный вывод (для `status` — история переходов). |
-| `--config <path>` | нет | `./.env` | Путь к файлу конфигурации. |
-| `--help` / `-h` | — | — | Справка. |
-| `--token <hex>` | для всех кроме start | `MS_TOKEN` или `~/.voice-assistant-token` | Session-токен |
-| `--user <id>` | только для start | — | external_id |
+Все остальные команды требуют токен. Источники токена (по убыванию
+приоритета):
 
-`--user` валидируется: непустая строка, длина ≤ 64, `[a-zA-Z0-9_.-]`.
-Нарушение → exit 2 с сообщением `invalid --user`.
+1. флаг `--token <hex>`;
+2. переменная окружения `MS_TOKEN`;
+3. файл `~/.voice-assistant-token` (рекомендуется `chmod 600`).
+
+Если токен пуст — ошибка `--token is required` (exit 2).
+
+Флаг `--user <external_id>` используется **только** командой `start`.
+`external_id` валидируется: непустой, длина ≤ 64, символы `[a-zA-Z0-9_.-]`.
 
 ---
 
-## 2. Коды возврата
+## 2. Общие флаги и коды возврата
+
+| Флаг | Команды | Назначение |
+|---|---|---|
+| `--user <id>` | `start` | `external_id` пользователя. |
+| `--token <hex>` | все, кроме `start` | Session-токен. |
+| `--json` | все | Вывод в JSON. |
+
+Коды возврата:
 
 | Код | Значение |
 |---|---|
 | `0` | Успех. |
-| `1` | Бизнес-ошибка: `not found`, `forbidden`, `failed`-статус обработки. |
-| `2` | Ошибка аргументов: неизвестная команда, отсутствует `--user`, невалидный аргумент. |
-| `3` | Инфраструктурная ошибка: недоступна БД, очередь переполнена, таймаут. |
-
-Коды стабильны и используются в скриптах и тестах.
+| `1` | Бизнес-ошибка: не найдено / недоступно (`not found`, `forbidden`). |
+| `2` | Ошибка аргументов: невалидный `--user`, пустой `--token`, невалидный `meeting_id`, файл не найден, неподдерживаемое расширение. |
+| `3` | Инфраструктурная ошибка и всё остальное: недоступна БД, очередь переполнена, таймаут, неизвестная команда, повторный `start` с занятым именем. |
 
 ---
 
@@ -43,58 +52,67 @@
 
 Регистрация + выдача токена. Токен показывается **один раз**.
 
-```
-meeting-assistant --user <id> start
+```bash
+voice-assistant --user <external_id> start
 ```
 
 **Вывод (text):**
 
 ```
-user_id: 1
+user_id: 3a2b5c7d-...
 external_id: alice
-created_at: 2026-11-19 10:00:00
+created_at: 2026-11-25T15:00:00+03:00
+
+token: 7c3aed...
+
+Сохраните токен — он показывается один раз.
+Дальше: --token <token> или MS_TOKEN=<token> или ~/.voice-assistant-token.
 ```
 
 **Вывод (--json):**
 
 ```json
-{"user_id":1,"external_id":"alice","created_at":"2026-11-19T10:00:00Z"}
+{"user_id":"3a2b5c7d-...","external_id":"alice","token":"7c3aed...","created_at":"2026-11-25T15:00:00+03:00"}
 ```
 
-**Поведение:** если пользователь уже существует — возвращает его же данные,
-exit 0. Реальная регистрация выполняется и при первом вызове любой другой
-команды (lazy `EnsureExists`), но `start` — явный способ.
+**Поведение:** при первом вызове создаёт пользователя. Повторный `start`
+с тем же `--user` возвращает ошибку `user "alice" already exists` (exit 3).
+Для перевыпуска токена используйте `rotate`; сброс при утере — только вручную
+через `psql` или пересоздание БД.
 
-### 3.1a. rotate
+### 3.2. `rotate`
 
-Перевыпуск токена. Требует действующий `--token`. Старый инвалидируется.
+Перевыпуск токена. Требует действующий `--token` (старый инвалидируется).
 
----
+```bash
+voice-assistant --token <old-token> rotate
+```
 
-### 3.2. `load <path>`
+### 3.3. `load <path>`
 
 Загрузка файла и постановка задачи в очередь.
 
-```
-meeting-assistant --user <id> load <path>
+```bash
+voice-assistant --token <token> load <path>
 ```
 
-| Аргумент | Обязательный | Описание |
-|---|---|---|
-| `<path>` | да | Путь к локальному файлу. Поддерживаемые расширения: `.mp3`, `.wav`, `.m4a`, `.ogg`, `.flac`, `.txt`, `.json`. |
+Поддерживаемые расширения: `.mp3`, `.wav`, `.m4a`, `.ogg`, `.flac`,
+`.txt`, `.json`. `.txt` и `.json` — для тестового режима `mock`-Speech.
 
 **Что делает:**
-1. Проверяет `--user` (создаёт при необходимости).
-2. Валидирует файл: существует, читается, размер ≤ `MS_MAX_UPLOAD_BYTES` (по умолчанию 100 MiB), расширение в списке.
-3. Копирует в `MS_UPLOAD_DIR/<uuid>.<ext>`.
-4. В транзакции: `INSERT meetings` + `INSERT processing_tasks(status='created')` + `INSERT status_history`.
-5. `Enqueue` — если очередь полна, помечает задачу `failed` и возвращает ошибку.
-6. Печатает `meeting_id` и текущий статус.
+
+1. Валидирует файл: существует, не каталог, размер ≤ `MS_MAX_UPLOAD_BYTES`
+   (по умолчанию 100 MiB), расширение в списке.
+2. Копирует в `MS_UPLOAD_DIR/<uuid>.<ext>`.
+3. В транзакции: `INSERT meetings` + `INSERT processing_tasks(status='created')`
+   + `INSERT status_history`.
+4. `Enqueue` — если очередь полна, помечает задачу `failed` и возвращает ошибку.
+5. Печатает `meeting_id` (UUID) и текущий статус.
 
 **Вывод:**
 
 ```
-meeting_id: 42
+meeting_id: 3a2b5c7d-...
 status: created
 ```
 
@@ -102,246 +120,173 @@ status: created
 
 | Ситуация | exit | Сообщение |
 |---|---|---|
-| Файл не найден | 2 | `file not found: ./nope.mp3` |
-| Расширение не поддерживается | 2 | `unsupported file type: .pdf` |
-| Файл слишком большой | 2 | `file too large: 250 MiB > 100 MiB` |
-| Очередь переполнена | 3 | `server busy: processing queue is full, try again later` |
-| БД недоступна | 3 | `database unavailable: ...` |
+| Файл не найден | 2 | `invalid argument: file not found: ./nope.mp3` |
+| Расширение не поддерживается | 2 | `invalid argument: unsupported file type: .pdf` |
+| Файл слишком большой | 2 | `invalid argument: file too large: ...` |
+| Очередь переполнена | 3 | `processing queue is full, try again later` |
+| БД недоступна | 3 | обёрнутая ошибка БД |
 
-`txt` и `json` — для тестового режима: mock-Speech возвращает заранее
-подготовленную транскрипцию на основе содержимого файла (см. `CONFIGURATION.md`,
-`MS_SPEECH_PROVIDER=mock`).
-
----
-
-### 3.3. `list`
+### 3.4. `list`
 
 Список встреч текущего пользователя.
 
-```
-meeting-assistant --user <id> list [--limit N] [--offset M]
+```bash
+voice-assistant --token <token> list [--limit N] [--offset M]
 ```
 
 | Флаг | По умолчанию | Описание |
 |---|---|---|
-| `--limit` | `50` | Максимум записей. Max `500`. |
-| `--offset` | `0` | Смещение. |
+| `--limit` | `50` | Максимум записей (нормализуется к 50 при `<=0` или `>500`). |
+| `--offset` | `0` | Смещение (отрицательное нормализуется к 0). |
 
 **Вывод (text):**
 
 ```
-ID   CREATED              STATUS       SUMMARY
-1    2026-11-19 10:12:03  completed    Обсудили бюджет Q1, сроки релиза...
-2    2026-11-19 10:14:41  processing   —
-3    2026-11-19 10:15:02  failed       —
+ID         CREATED              STATUS     SUMMARY
+3a2b5c7d   2026-11-25 15:00:00  completed  Краткая выжимка...
 ```
 
-`SUMMARY` — первые 60 символов краткой выжимки. Если её ещё нет — `—`.
+`SUMMARY` — первые 60 символов выжимки; если её нет — `—`.
 
-**Вывод (--json):**
-
-```json
-[
-  {"id":1,"title":"sample","status":"completed","summary":"Обсудили бюджет Q1...","created_at":"2026-11-19T10:12:03Z"},
-  {"id":2,"title":"daily","status":"processing","summary":"","created_at":"2026-11-19T10:14:41Z"}
-]
-```
-
-Если встреч нет — пустая таблица (только заголовок) и exit 0.
-
----
-
-### 3.4. `status <id>`
+### 3.5. `status <id>`
 
 Детальный статус обработки встречи.
 
-```
-meeting-assistant --user <id> status <id> [--verbose]
+```bash
+voice-assistant --token <token> status <meeting_id> [--verbose] [--watch [--interval D]]
 ```
 
 **Вывод (text):**
 
 ```
-meeting_id: 3
+meeting_id: 3a2b5c7d-...
 status: failed
-created_at: 2026-11-19 10:15:02
-updated_at: 2026-11-19 10:15:09
-error: speech client: upstream 503
+created_at: 2026-11-25 15:00:02
+updated_at: 2026-11-25 15:00:09
+error: speech: mock failure (as requested)
 ```
 
-При `--verbose` дополнительно:
-
-```
-history:
-  2026-11-19 10:15:02  (null) -> created
-  2026-11-19 10:15:03  created -> processing
-  2026-11-19 10:15:09  processing -> failed
-```
-
-Поле `error` выводится только при `failed`. Для остальных статусов строка
-опускается.
+`--verbose` добавляет историю переходов `status_history`;
+`--watch` опрашивает статус до терминального состояния (интервал по
+умолчанию 2s).
 
 **Ошибки:**
 
 | Ситуация | exit | Сообщение |
 |---|---|---|
-| Встреча не найдена | 1 | `meeting 999 not found` |
-| Встреча принадлежит другому | 1 | `meeting 42 not found` (не раскрываем) |
+| Встреча не найдена / чужая | 1 | `meeting <id> not found` |
+| Невалидный `meeting_id` | 2 | `invalid argument: invalid meeting id` |
 
----
-
-### 3.5. `get <id>`
+### 3.6. `get <id>`
 
 Полная транскрипция встречи.
 
-```
-meeting-assistant --user <id> get <id>
+```bash
+voice-assistant --token <token> get <meeting_id>
 ```
 
-**Вывод (text):** транскрипция целиком, без обёртки.
-
-**Вывод (--json):**
+**Вывод (text):** транскрипция целиком. **(--json):**
 
 ```json
-{"meeting_id":1,"title":"sample","status":"completed","transcription":"...полный текст..."}
+{"meeting_id":"3a2b5c7d-...","transcription":"...полный текст..."}
 ```
 
 **Ошибки:**
 
 | Ситуация | exit | Сообщение |
 |---|---|---|
-| Встреча не найдена / чужая | 1 | `meeting 42 not found` |
-| Транскрипции ещё нет (статус `created`/`processing`) | 1 | `transcription not ready: status=processing` |
+| Встреча не найдена / чужая | 1 | `meeting <id> not found` |
+| Транскрипции ещё нет | 1 | `meeting <id> not found (or transcription not ready)` |
 
----
-
-### 3.6. `find <keyword>`
+### 3.7. `find <keyword>`
 
 Полнотекстовый поиск по встречам текущего пользователя.
 
-```
-meeting-assistant --user <id> find <keyword>
+```bash
+voice-assistant --token <token> find <keyword>
 ```
 
-`<keyword>` — одна или несколько фраз через пробел (объединяются в один
-поисковый запрос). Синтаксис `websearch_to_tsquery`: поддерживает
-`OR`, `-слово`, `"точная фраза"`.
+`<keyword>` — одна или несколько фраз (объединяются в один запрос).
+Синтаксис `websearch_to_tsquery`: `OR`, `-слово`, `"точная фраза"`.
 
 **Вывод (text):**
 
 ```
-ID   CREATED              STATUS       SNIPPET
-1    2026-11-19 10:12:03  completed    ...обсудили <бюджет> Q1 и сроки...
+ID         CREATED              STATUS     SNIPPET
+3a2b5c7d   2026-11-25 15:00:02  completed  ...обсудили <бюджет> Q1...
 ```
 
-**Вывод (--json):**
+Пустой keyword → exit 2. Нет результатов — пустая таблица, exit 0.
 
-```json
-[{"id":1,"title":"sample","status":"completed","snippet":"...обсудили <бюджет> Q1 и сроки...","created_at":"2026-11-19T10:12:03Z"}]
-```
-
-Если ничего не найдено — пустая таблица, exit 0 (не ошибка).
-
-**Ошибки:**
-
-| Ситуация | exit | Сообщение |
-|---|---|---|
-| Пустой keyword | 2 | `keyword is required` |
-
----
-
-### 3.7. `chat <id> <text>`
+### 3.8. `chat <id> <text>`
 
 Вопрос к LLM по материалам одной встречи.
 
-```
-meeting-assistant --user <id> chat <id> <text>
+```bash
+voice-assistant --token <token> chat <meeting_id> <text>
 ```
 
-| Аргумент | Обязательный | Описание |
-|---|---|---|
-| `<id>` | да | `meeting_id`. |
-| `<text>` | да | Вопрос. Может содержать пробелы (один аргумент в кавычках). |
-
-**Что делает:**
-1. Проверяет, что встреча принадлежит пользователю и её статус — `completed`
-   (только по полностью обработанной встрече есть контекст).
-2. Берёт транскрипцию (и выжимку, если есть) как контекст.
-3. `LLMClient.Answer(ctx, question, contextText)`.
-4. `ChatRepo.Save(userID, meetingID, question, answer)`.
+Требует статус встречи `completed`. Контекст для LLM — выжимка (если есть)
++ транскрипция; пара вопрос-ответ сохраняется в `chat_messages`.
 
 **Вывод (text):**
 
 ```
 Q: какие сроки обсудили?
-A: На встрече обсудили сроки релиза — конец Q1, с контрольной точкой в середине февраля.
-```
-
-**Вывод (--json):**
-
-```json
-{"meeting_id":1,"question":"какие сроки обсудили?","answer":"На встрече обсудили..."}
+A: На встрече обсудили сроки релиза — конец Q1.
 ```
 
 **Ошибки:**
 
 | Ситуация | exit | Сообщение |
 |---|---|---|
-| Встреча не найдена / чужая | 1 | `meeting 42 not found` |
-| Статус не `completed` | 1 | `meeting 42 not ready for questions: status=processing` |
-| LLM недоступен | 3 | `llm unavailable: ...` |
-| Таймаут LLM | 3 | `llm timeout after 60s` |
+| Встреча не найдена / чужая | 1 | `meeting <id> not found` |
+| Статус не `completed` | 2 | `invalid argument: meeting not ready for questions: status=...` |
+| LLM недоступен / таймаут | 3 | обёрнутая ошибка LLM |
 
 ---
 
 ## 4. Сводная таблица
 
-| Команда | Аргументы | Флаги | Exit 0 | Exit 1 | Exit 2 | Exit 3 |
-|---|---|---|---|---|---|---|
-| `start` | — | — | ✓ | | | |
-| `load` | `<path>` | — | ✓ | | ✓ | ✓ |
-| `list` | — | `--limit`, `--offset` | ✓ | | ✓ | ✓ |
-| `status` | `<id>` | `--verbose` | ✓ | ✓ | ✓ | ✓ |
-| `get` | `<id>` | — | ✓ | ✓ | ✓ | ✓ |
-| `find` | `<keyword>` | — | ✓ | | ✓ | ✓ |
-| `chat` | `<id> <text>` | — | ✓ | ✓ | ✓ | ✓ |
+| Команда | Аргументы | Флаги |
+|---|---|---|
+| `start` | — | `--user`, `--json` |
+| `rotate` | — | `--json` |
+| `load` | `<path>` | `--json` |
+| `list` | — | `--limit`, `--offset`, `--json` |
+| `status` | `<id>` | `--verbose`, `--watch`, `--interval`, `--json` |
+| `get` | `<id>` | `--json` |
+| `find` | `<keyword>` | `--json` |
+| `chat` | `<id> <text>` | `--json` |
 
 ---
 
 ## 5. Пример полного сценария
 
 ```bash
-export MS_DB_DSN="postgres://ms:ms@localhost:5432/ms?sslmode=disable"
+export MS_DB_DSN="postgres://ms:ms@localhost:5432/voice_assistant?sslmode=disable"
 
-meeting-assistant --user alice start
-# user_id: 1
-# external_id: alice
-# created_at: 2026-11-19 10:00:00
+# регистрация: токен показывается один раз
+voice-assistant --user alice start
+# token: 7c3aed...
 
-meeting-assistant --user alice load ./testdata/sample.mp3
-# meeting_id: 1
+TOKEN=7c3aed...
+
+voice-assistant --token "$TOKEN" load ./testdata/sample.txt
+# meeting_id: 3a2b5c7d-...
 # status: created
 
-meeting-assistant --user alice status 1
-# status: processing
+voice-assistant --token "$TOKEN" status 3a2b5c7d-...
+# status: processing → ... → completed
 
-# через несколько секунд
-meeting-assistant --user alice status 1
-# status: completed
-
-meeting-assistant --user alice get 1
-# <полный текст транскрипции>
-
-meeting-assistant --user alice find "бюджет"
-# ID   CREATED              STATUS       SNIPPET
-# 1    2026-11-19 10:12:03  completed    ...обсудили <бюджет> Q1...
-
-meeting-assistant --user alice chat 1 "какие сроки обсудили?"
-# Q: какие сроки обсудили?
-# A: ...
+voice-assistant --token "$TOKEN" list
+voice-assistant --token "$TOKEN" get 3a2b5c7d-...
+voice-assistant --token "$TOKEN" find "бюджет"
+voice-assistant --token "$TOKEN" chat 3a2b5c7d-... "какие сроки обсудили?"
 
 # чужой пользователь не видит встречу
-meeting-assistant --user bob status 1
-# meeting 1 not found
+voice-assistant --user bob start
+voice-assistant --token "$BOB_TOKEN" status 3a2b5c7d-...
+# meeting 3a2b5c7d-... not found
 # exit 1
 ```

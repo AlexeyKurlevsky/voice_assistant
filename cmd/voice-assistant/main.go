@@ -65,6 +65,9 @@ func run(cfg *config.Config, log *slog.Logger) int {
 	}
 	llmClient, err := llm.New(cfg.LLMProvider, llm.Options{
 		MockDelay: cfg.MockLLMDelay,
+		BaseURL:   cfg.LLMBaseURL,
+		APIKey:    cfg.LLMAPIKey,
+		Model:     cfg.LLMModel,
 	})
 	if err != nil {
 		log.Error("llm factory", "err", err)

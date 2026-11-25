@@ -58,13 +58,12 @@
 
 | Переменная | По умолчанию | Описание |
 |---|---|---|
-| `MS_HTTP_TIMEOUT` | `60s` | Общий таймаут HTTP-клиента (dial + TLS + чтение тела). |
 | `MS_SPEECH_TIMEOUT` | `120s` | Таймаут на один вызов `SpeechClient.Transcribe`. |
 | `MS_LLM_TIMEOUT` | `60s` | Таймаут на один вызов `LLMClient.Summarize` / `Answer`. |
 
-Внешние таймауты оборачивают внутренние: `MS_HTTP_TIMEOUT < MS_SPEECH_TIMEOUT`.
-При нарушении этого правила `config.Load` пишет предупреждение в лог,
-но не падает (HTTP-таймаут всё равно сработает первым).
+HTTP-клиент `OpenAICompat` не навешивает собственный deadline — он управляется
+переданным `context.Context` (воркер уже оборачивает вызов в
+`context.WithTimeout` с `MS_LLM_TIMEOUT`).
 
 ### 2.5. Провайдеры
 
@@ -86,14 +85,10 @@
 
 #### `MS_SPEECH_PROVIDER=whisper`
 
-| Переменная | Обязательно при `whisper` | Описание |
-|---|---|---|
-| `MS_WHISPER_BASE_URL` | да | Базовый URL OpenAI-совместимого API. Пример: `https://api.openai.com/v1`, `https://api.groq.com/openai/v1`, `http://localhost:8080/v1`. |
-| `MS_WHISPER_API_KEY` | да | Bearer-токен. |
-| `MS_WHISPER_MODEL` | нет (по умолчанию `whisper-1`) | Имя модели. |
-
-Если `MS_SPEECH_PROVIDER=whisper`, а `MS_WHISPER_BASE_URL` или
-`MS_WHISPER_API_KEY` пусты — `config.Load` возвращает ошибку.
+**План, пока не реализовано.** Сейчас `speech.New("whisper", ...)`
+возвращает ошибку `not implemented yet`. Планируемые переменные:
+`MS_WHISPER_BASE_URL`, `MS_WHISPER_API_KEY`, `MS_WHISPER_MODEL`
+(OpenAI-совместимый `/audio/transcriptions`).
 
 #### `MS_LLM_PROVIDER=mock`
 
@@ -103,11 +98,16 @@
 
 #### `MS_LLM_PROVIDER=openrouter`
 
+Реальная реализация — универсальная OpenAI-совместимая обёртка
+(`infra/llm/openai_compat.go`): один и тот же код работает с OpenRouter
+и любым другим OpenAI-совместимым API. Модель задаётся конфигом, поэтому
+смена модели — это только env, без изменения кода.
+
 | Переменная | Обязательно при `openrouter` | Описание |
 |---|---|---|
-| `MS_OPENROUTER_BASE_URL` | да | По умолчанию `https://openrouter.ai/api/v1`. |
-| `MS_OPENROUTER_API_KEY` | да | Ключ. |
-| `MS_OPENROUTER_MODEL` | да | Например `anthropic/claude-3.5-sonnet`. |
+| `MS_OPENROUTER_BASE_URL` | нет | Базовый URL OpenAI-совместимого API. По умолчанию `https://openrouter.ai/api/v1`. |
+| `MS_OPENROUTER_API_KEY` | да | Bearer-ключ. |
+| `MS_OPENROUTER_MODEL` | да | Модель, например `deepseek/deepseek-chat`, `anthropic/claude-3.5-sonnet`. |
 
 Если ключ или модель пусты — `config.Load` возвращает ошибку.
 
@@ -146,14 +146,17 @@
 | `MS_DB_DSN` пуст | ошибка |
 | `MS_WORKER_CONCURRENCY <= 0` | ошибка |
 | `MS_JOB_QUEUE_CAPACITY <= 0` | ошибка |
-| `MS_SPEECH_PROVIDER` ∉ {mock, whisper} | ошибка |
+| `MS_SHUTDOWN_TIMEOUT <= 0` | ошибка |
+| `MS_MAX_UPLOAD_BYTES <= 0` | ошибка |
+| `MS_SPEECH_TIMEOUT <= 0` или `MS_LLM_TIMEOUT <= 0` | ошибка |
+| `MS_SPEECH_PROVIDER` ∉ {mock, whisper} | ошибка (whisper — план) |
 | `MS_LLM_PROVIDER` ∉ {mock, openrouter} | ошибка |
-| `speech=whisper`, но ключ/URL пусты | ошибка |
 | `llm=openrouter`, но ключ/модель пусты | ошибка |
-| `MS_LOG_LEVEL` ∉ {debug, info, warn, error} | ошибка |
-| `MS_HTTP_TIMEOUT >= MS_SPEECH_TIMEOUT` | предупреждение в лог |
 
 При любой ошибке — сообщение `config: <detail>` и выход с кодом 3.
+
+`MS_LOG_LEVEL`/`MS_LOG_FORMAT` не валидируются жёстко — невалидные значения
+деградируют к дефолтам в логгере.
 
 ---
 
@@ -174,32 +177,34 @@ MS_WORKER_CONCURRENCY=3
 MS_JOB_QUEUE_CAPACITY=100
 MS_SHUTDOWN_TIMEOUT=10s
 
-# --- Таймауты ---
-MS_HTTP_TIMEOUT=60s
+# --- Таймауты внешних шагов ---
 MS_SPEECH_TIMEOUT=120s
 MS_LLM_TIMEOUT=60s
 
-# --- Speech ---
+# --- Провайдеры ---
 MS_SPEECH_PROVIDER=mock
-MS_MOCK_SPEECH_DELAY=2s
-# MS_WHISPER_BASE_URL=https://api.groq.com/openai/v1
-# MS_WHISPER_API_KEY=...
-# MS_WHISPER_MODEL=whisper-large-v3
-
-# --- LLM ---
 MS_LLM_PROVIDER=mock
+
+# --- Speech: mock ---
+MS_MOCK_SPEECH_DELAY=2s
+
+# --- LLM: OpenRouter ---
+MS_OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
+MS_OPENROUTER_API_KEY=
+MS_OPENROUTER_MODEL=
 MS_MOCK_LLM_DELAY=1s
-# MS_OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
-# MS_OPENROUTER_API_KEY=...
-# MS_OPENROUTER_MODEL=anthropic/claude-3.5-sonnet
+
+# --- Аутентификация ---
+# MS_TOKEN=<session-токен>
 
 # --- Логи ---
 MS_LOG_LEVEL=info
 MS_LOG_FORMAT=text
 ```
 
-Закомментированные блоки — примеры реальных провайдеров. Для переключения
-нужно раскомментировать три строки и поменять `MS_*_PROVIDER`.
+Для переключения LLM на OpenRouter нужно задать
+`MS_OPENROUTER_API_KEY`/`MS_OPENROUTER_MODEL` и поставить
+`MS_LLM_PROVIDER=openrouter`.
 
 ---
 
@@ -222,8 +227,9 @@ make test-integration
 
 ## 6. Что заменить для перехода на реальные провайдеры
 
-1. В `.env` установить `MS_SPEECH_PROVIDER=whisper` и три `MS_WHISPER_*`.
-2. Установить `MS_LLM_PROVIDER=openrouter` и три `MS_OPENROUTER_*`.
+1. LLM: установить `MS_LLM_PROVIDER=openrouter`, `MS_OPENROUTER_API_KEY`
+   и `MS_OPENROUTER_MODEL` (OpenAI-совместимая обёртка уже реализована).
+2. Speech: whisper — в плане; сейчас доступен только `mock`.
 3. Перезапустить приложение.
 
 Бизнес-логика, миграции, CLI и тесты не меняются — это прямое следствие

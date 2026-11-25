@@ -61,10 +61,10 @@ API, чтобы их можно было менять и тестировать 
 разработка). Бизнес-логика не должна зависеть от конкретного провайдера.
 
 **Решение.** Интерфейсы `SpeechClient` и `LLMClient` в `application/ports.go`.
-Реализации — `infra/speech/{mock,whisper}.go`,
-`infra/llm/{mock,openrouter}.go`. Выбор — через
-`MS_SPEECH_PROVIDER` и `MS_LLM_PROVIDER` в фабриках
-`infra/*/factory.go`.
+Реализации — `infra/speech/{mock,whisper}.go` (whisper — план),
+`infra/llm/{mock,openai_compat}.go` (OpenAI-совместимая обёртка,
+провайдер `openrouter`). Выбор — через `MS_SPEECH_PROVIDER` и
+`MS_LLM_PROVIDER` в фабриках `infra/*/factory.go`.
 
 **Альтернативы.**
 - *Только реальный API* — не работает без ключей, сложно тестировать.
@@ -164,7 +164,7 @@ API, чтобы их можно было менять и тестировать 
 **Контекст.** Обработка файлов долгая; при массовой загрузке нельзя
 плодить неограниченные горутины.
 
-**Решение.** `chan int64` с буфером `JobQueueCapacity`, `N` воркеров.
+**Решение.** `chan uuid.UUID` с буфером `JobQueueCapacity`, `N` воркеров.
 `Enqueue` — неблокирующий `select` с `default`. При полном канале —
 `domain.ErrQueueFull` (exit 3), задача помечается `failed` с `"queue full"`.
 
