@@ -1,5 +1,3 @@
-// Package cli — презентационный слой: cobra-команды, парсинг аргументов,
-// форматирование вывода. Бизнес-логика — в application.
 package cli
 
 import (
@@ -77,12 +75,12 @@ func NewRoot(deps *Deps, defaultToken string) *cobra.Command {
 	root.AddCommand(
 		newStartCmd(deps, &userID, &jsonOut),
 		newRotateCmd(deps, &jsonOut),
-		newLoadCmd(deps, &jsonOut),
-		newListCmd(deps, &jsonOut),
-		newStatusCmd(deps, &jsonOut),
-		newGetCmd(deps, &jsonOut),
-		newFindCmd(deps, &jsonOut),
-		newChatCmd(deps, &jsonOut),
+		newLoadCmd(deps, &userID, &jsonOut),
+		newListCmd(deps, &userID, &jsonOut),
+		newStatusCmd(deps, &userID, &jsonOut),
+		newGetCmd(deps, &userID, &jsonOut),
+		newFindCmd(deps, &userID, &jsonOut),
+		newChatCmd(deps, &userID, &jsonOut),
 	)
 
 	return root
