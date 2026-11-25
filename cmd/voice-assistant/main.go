@@ -1,4 +1,3 @@
-// Command voice-assistant — CLI для загрузки и обработки встреч.
 package main
 
 import (
@@ -8,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/AlexeyKurlevsky/voice_assistant/internal/application"
@@ -20,7 +20,6 @@ import (
 	"github.com/AlexeyKurlevsky/voice_assistant/internal/infra/speech"
 	"github.com/AlexeyKurlevsky/voice_assistant/internal/logger"
 	"github.com/AlexeyKurlevsky/voice_assistant/internal/worker"
-	"github.com/google/uuid"
 )
 
 func main() {
@@ -96,11 +95,6 @@ func run(cfg *config.Config, log *slog.Logger) int {
 	)
 	wp.Start(ctx)
 
-	// Recovery при старте: зависшие processing → created + добрать
-	// created/transcribed/summarized, оставшиеся с прошлого запуска.
-	recoverTasks(ctx, taskRepo, wp, log)
-
-	// Сервисы
 	userService := application.NewUserService(userRepo)
 	meetingService := application.NewMeetingService(
 		meetingRepo, taskRepo, wp, cfg.UploadDir, cfg.MaxUploadBytes, log,
@@ -109,17 +103,26 @@ func run(cfg *config.Config, log *slog.Logger) int {
 		meetingRepo, taskRepo, chatRepo, llmClient, cfg.LLMTimeout, log,
 	)
 
-	// CLI
 	deps := &cli.Deps{
 		UserService:    userService,
 		MeetingService: meetingService,
 		ChatService:    chatService,
 	}
-	root := cli.NewRoot(deps)
+	root := cli.NewRoot(deps, cfg.Token)
+
+	// Recovery — только для load: read-only команды не должны
+	// поднимать висящие задачи.
+	if commandName(os.Args[1:]) == "load" {
+		n := recoverTasks(ctx, taskRepo, wp, log)
+		if n > 0 {
+			fmt.Fprintf(os.Stderr,
+				"[recovery] восстановлено %d задач, обработка в фоне (до %s)\n",
+				n, cfg.ShutdownTimeout)
+		}
+	}
 
 	cliErr := root.ExecuteContext(ctx)
 
-	// Graceful shutdown
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer cancel()
 	if err := wp.Stop(shutdownCtx); err != nil {
@@ -133,13 +136,47 @@ func run(cfg *config.Config, log *slog.Logger) int {
 	return 0
 }
 
+// commandName возвращает имя первой подкоманды в args, пропуская
+// известные флаги со значениями (--user X, --token X, и т.п.).
+func commandName(args []string) string {
+	flagsWithValue := map[string]bool{
+		"--user":     true,
+		"--token":    true,
+		"--interval": true,
+		"--limit":    true,
+		"--offset":   true,
+	}
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "--" {
+			if i+1 < len(args) {
+				return args[i+1]
+			}
+			return ""
+		}
+		if strings.HasPrefix(a, "--") {
+			if strings.Contains(a, "=") {
+				continue
+			}
+			if flagsWithValue[a] && i+1 < len(args) {
+				i++
+			}
+			continue
+		}
+		if strings.HasPrefix(a, "-") {
+			continue
+		}
+		return a
+	}
+	return ""
+}
+
 // recoverTasks сбрасывает «зависшие» processing → created и ставит в очередь
 // все незавершённые задачи (created/transcribed/summarized).
-// Дедупликация обязательна: ResetStaleProcessing переводит задачи в created,
-// и ListPendingTasks сразу же их возвращает — без дедупликации задача
-// попадает в очередь дважды, и два воркера берут её параллельно.
+// Дедупликация обязательна: ResetStaleProcessing возвращает id, которые
+// ListPendingTasks тут же увидит снова.
 func recoverTasks(ctx context.Context, taskRepo application.TaskRepo, wp *application.WorkerPool, log *slog.Logger) int {
-	seen := make(map[uuid.UUID]bool)
+	seen := make(map[string]bool)
 	total := 0
 
 	stale, err := taskRepo.ResetStaleProcessing(ctx)
@@ -147,10 +184,11 @@ func recoverTasks(ctx context.Context, taskRepo application.TaskRepo, wp *applic
 		log.Warn("recover: reset stale", "err", err)
 	} else {
 		for _, id := range stale {
-			if seen[id] {
+			key := id.String()
+			if seen[key] {
 				continue
 			}
-			seen[id] = true
+			seen[key] = true
 			if err := wp.Enqueue(ctx, id); err != nil {
 				log.Warn("recover: enqueue stale", "task_id", id, "err", err)
 			} else {
@@ -166,10 +204,11 @@ func recoverTasks(ctx context.Context, taskRepo application.TaskRepo, wp *applic
 		return total
 	}
 	for _, id := range pending {
-		if seen[id] {
+		key := id.String()
+		if seen[key] {
 			continue
 		}
-		seen[id] = true
+		seen[key] = true
 		if err := wp.Enqueue(ctx, id); err != nil {
 			log.Warn("recover: enqueue pending", "task_id", id, "err", err)
 		} else {

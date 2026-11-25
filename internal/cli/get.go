@@ -20,10 +20,7 @@ func newGetCmd(deps *Deps, userID *string, jsonOut *bool) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 
-			u, err := deps.UserService.EnsureExists(ctx, *userID)
-			if err != nil {
-				return err
-			}
+			u := mustUser(ctx)
 
 			meetingID, err := uuid.Parse(args[0])
 			if err != nil {

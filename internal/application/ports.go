@@ -17,10 +17,17 @@ import (
 
 // UserRepo — хранилище пользователей.
 type UserRepo interface {
-	// EnsureExists — идемпотентный get-or-create по external_id.
-	EnsureExists(ctx context.Context, externalID string) (*domain.User, error)
+	// Create создаёт пользователя. ErrAlreadyExists, если external_id занят.
+	Create(ctx context.Context, externalID, tokenHash string) (*domain.User, error)
 
+	// GetByExternalID — ErrNotFound, если нет.
 	GetByExternalID(ctx context.Context, externalID string) (*domain.User, error)
+
+	// GetByTokenHash — ErrNotFound, если нет.
+	GetByTokenHash(ctx context.Context, tokenHash string) (*domain.User, error)
+
+	// UpdateTokenHash — перевыпуск токена.
+	UpdateTokenHash(ctx context.Context, userID uuid.UUID, tokenHash string) error
 }
 
 // MeetingRepo — встречи + связанные транскрипция/выжимка.

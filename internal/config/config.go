@@ -1,16 +1,16 @@
-// Package config загружает конфигурацию из .env и переменных окружения.
 package config
 
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
 )
 
-// Config — все настройки приложения.
 type Config struct {
 	DBDSN          string
 	DBMaxConns     int32
@@ -31,6 +31,9 @@ type Config struct {
 
 	MockSpeechDelay time.Duration
 	MockLLMDelay    time.Duration
+
+	// Token — дефолт для --token. Порядок: MS_TOKEN → ~/.voice-assistant-token → "".
+	Token string
 
 	LogLevel  string
 	LogFormat string
@@ -54,6 +57,11 @@ func LoadWithOptions(opts LoadOptions) (*Config, error) {
 		_ = godotenv.Load(opts.EnvFile)
 	}
 
+	token := os.Getenv("MS_TOKEN")
+	if token == "" {
+		token = readTokenFile()
+	}
+
 	c := &Config{
 		DBDSN:             os.Getenv("MS_DB_DSN"),
 		DBMaxConns:        int32(getEnvInt("MS_DB_MAX_CONNS", 10)),
@@ -69,6 +77,7 @@ func LoadWithOptions(opts LoadOptions) (*Config, error) {
 		LLMProvider:       getEnv("MS_LLM_PROVIDER", "mock"),
 		MockSpeechDelay:   getEnvDuration("MS_MOCK_SPEECH_DELAY", 2*time.Second),
 		MockLLMDelay:      getEnvDuration("MS_MOCK_LLM_DELAY", 1*time.Second),
+		Token:             token,
 		LogLevel:          getEnv("MS_LOG_LEVEL", "info"),
 		LogFormat:         getEnv("MS_LOG_FORMAT", "text"),
 	}
@@ -102,6 +111,20 @@ func LoadWithOptions(opts LoadOptions) (*Config, error) {
 		return nil, fmt.Errorf("config: unknown MS_LLM_PROVIDER=%q", c.LLMProvider)
 	}
 	return c, nil
+}
+
+// readTokenFile читает токен из ~/.voice-assistant-token, если файл есть.
+// Ошибки игнорируются — это опциональный источник.
+func readTokenFile() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	b, err := os.ReadFile(filepath.Join(home, ".voice-assistant-token"))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
 }
 
 func getEnv(key, def string) string {

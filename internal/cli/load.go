@@ -16,16 +16,12 @@ func newLoadCmd(deps *Deps, userID *string, jsonOut *bool) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 
-			u, err := deps.UserService.EnsureExists(ctx, *userID)
-			if err != nil {
-				return err
-			}
+			u := mustUser(ctx)
 
 			m, t, err := deps.MeetingService.Load(ctx, u.ID, args[0])
 			if err != nil {
 				return err
 			}
-
 			if *jsonOut {
 				return json.NewEncoder(cmd.OutOrStdout()).Encode(struct {
 					MeetingID string `json:"meeting_id"`

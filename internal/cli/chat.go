@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -11,9 +12,7 @@ import (
 	"github.com/AlexeyKurlevsky/voice_assistant/internal/domain"
 )
 
-// newChatCmd — команда chat <id> <text>: вопрос по материалам встречи.
-// Текст может содержать пробелы без кавычек: chat <id> какие сроки обсудили?
-func newChatCmd(deps *Deps, userID *string, jsonOut *bool) *cobra.Command {
+func newChatCmd(deps *Deps, token *string, jsonOut *bool) *cobra.Command {
 	return &cobra.Command{
 		Use:   "chat <id> <text>",
 		Short: "Задать вопрос по материалам встречи",
@@ -21,10 +20,7 @@ func newChatCmd(deps *Deps, userID *string, jsonOut *bool) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 
-			u, err := deps.UserService.EnsureExists(ctx, *userID)
-			if err != nil {
-				return err
-			}
+			u := mustUser(ctx)
 
 			meetingID, err := uuid.Parse(args[0])
 			if err != nil {
@@ -35,6 +31,9 @@ func newChatCmd(deps *Deps, userID *string, jsonOut *bool) *cobra.Command {
 
 			qa, err := deps.ChatService.Ask(ctx, u.ID, meetingID, question)
 			if err != nil {
+				if errors.Is(err, domain.ErrNotFound) {
+					return fmt.Errorf("meeting %s not found", meetingID)
+				}
 				return err
 			}
 

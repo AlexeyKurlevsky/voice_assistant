@@ -29,10 +29,7 @@ func newStatusCmd(deps *Deps, userID *string, jsonOut *bool) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 
-			u, err := deps.UserService.EnsureExists(ctx, *userID)
-			if err != nil {
-				return err
-			}
+			u := mustUser(ctx)
 
 			meetingID, err := uuid.Parse(args[0])
 			if err != nil {
@@ -93,6 +90,9 @@ func runStatusWatch(
 
 		task, err := deps.MeetingService.Status(ctx, meetingID, userID)
 		if err != nil {
+			if errors.Is(err, domain.ErrNotFound) {
+				return fmt.Errorf("meeting %s not found", meetingID)
+			}
 			return err
 		}
 

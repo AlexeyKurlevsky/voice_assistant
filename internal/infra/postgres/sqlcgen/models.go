@@ -62,5 +62,6 @@ type Transcription struct {
 type User struct {
 	ID         pgtype.UUID
 	ExternalID string
+	TokenHash  string
 	CreatedAt  time.Time
 }

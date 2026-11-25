@@ -19,10 +19,7 @@ func newFindCmd(deps *Deps, userID *string, jsonOut *bool) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 
-			u, err := deps.UserService.EnsureExists(ctx, *userID)
-			if err != nil {
-				return err
-			}
+			u := mustUser(ctx)
 
 			query := strings.Join(args, " ")
 

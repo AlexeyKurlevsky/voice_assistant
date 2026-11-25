@@ -7,18 +7,31 @@ package sqlcgen
 
 import (
 	"context"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const ensureUser = `-- name: EnsureUser :one
-INSERT INTO users (external_id)
-VALUES ($1)
-ON CONFLICT (external_id) DO UPDATE SET external_id = EXCLUDED.external_id
+const createUser = `-- name: CreateUser :one
+INSERT INTO users (external_id, token_hash)
+VALUES ($1, $2)
 RETURNING id, external_id, created_at
 `
 
-func (q *Queries) EnsureUser(ctx context.Context, externalID string) (User, error) {
-	row := q.db.QueryRow(ctx, ensureUser, externalID)
-	var i User
+type CreateUserParams struct {
+	ExternalID string
+	TokenHash  string
+}
+
+type CreateUserRow struct {
+	ID         pgtype.UUID
+	ExternalID string
+	CreatedAt  time.Time
+}
+
+func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (CreateUserRow, error) {
+	row := q.db.QueryRow(ctx, createUser, arg.ExternalID, arg.TokenHash)
+	var i CreateUserRow
 	err := row.Scan(&i.ID, &i.ExternalID, &i.CreatedAt)
 	return i, err
 }
@@ -29,9 +42,48 @@ FROM users
 WHERE external_id = $1
 `
 
-func (q *Queries) GetUserByExternalID(ctx context.Context, externalID string) (User, error) {
+type GetUserByExternalIDRow struct {
+	ID         pgtype.UUID
+	ExternalID string
+	CreatedAt  time.Time
+}
+
+func (q *Queries) GetUserByExternalID(ctx context.Context, externalID string) (GetUserByExternalIDRow, error) {
 	row := q.db.QueryRow(ctx, getUserByExternalID, externalID)
-	var i User
+	var i GetUserByExternalIDRow
 	err := row.Scan(&i.ID, &i.ExternalID, &i.CreatedAt)
 	return i, err
+}
+
+const getUserByTokenHash = `-- name: GetUserByTokenHash :one
+SELECT id, external_id, created_at
+FROM users
+WHERE token_hash = $1
+`
+
+type GetUserByTokenHashRow struct {
+	ID         pgtype.UUID
+	ExternalID string
+	CreatedAt  time.Time
+}
+
+func (q *Queries) GetUserByTokenHash(ctx context.Context, tokenHash string) (GetUserByTokenHashRow, error) {
+	row := q.db.QueryRow(ctx, getUserByTokenHash, tokenHash)
+	var i GetUserByTokenHashRow
+	err := row.Scan(&i.ID, &i.ExternalID, &i.CreatedAt)
+	return i, err
+}
+
+const updateUserTokenHash = `-- name: UpdateUserTokenHash :exec
+UPDATE users SET token_hash = $2 WHERE id = $1
+`
+
+type UpdateUserTokenHashParams struct {
+	ID        pgtype.UUID
+	TokenHash string
+}
+
+func (q *Queries) UpdateUserTokenHash(ctx context.Context, arg UpdateUserTokenHashParams) error {
+	_, err := q.db.Exec(ctx, updateUserTokenHash, arg.ID, arg.TokenHash)
+	return err
 }
