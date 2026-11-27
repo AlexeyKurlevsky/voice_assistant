@@ -166,3 +166,30 @@ test-integration:
 | `sqlcgen` изолированно | Генерируется из SQL; проверяется интеграционными тестами. |
 | `main.go` | Собирается `go build`; логика вынесена в `application`/`worker`. |
 | `logger` | Тонкая обёртка над `slog`, покрытия не требует. |
+
+---
+
+## 7. Профилирование (pprof)
+
+Профили снимаются через бенчмарки и `go test` — это стандартный способ для
+CLI-проекта (HTTP-`/debug/pprof` тут не к чему привязать). Покрыты
+CPU-нагруженные пути без внешних зависимостей:
+
+- `internal/application` — `BenchmarkFileSHA256`,
+  `BenchmarkMeetingService_Load`, `BenchmarkWorkerPool_EnqueueProcess`;
+- `internal/infra/llm` — `BenchmarkOpenAICompat_MarshalRequest`,
+  `BenchmarkOpenAICompat_ParseResponse`.
+
+Снять профиль:
+
+```bash
+make profile-cpu    # go test -bench . -cpuprofile → go tool pprof -top
+make profile-mem    # то же для -memprofile
+```
+
+Профили пишутся в `./cpu.prof` и `./mem.prof` (в `.gitignore`). Для
+интерактивного анализа — веб-интерфейс:
+
+```bash
+go tool pprof -http=:6060 cpu.prof
+```

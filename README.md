@@ -163,6 +163,8 @@ make build              # сборка ./bin/voice-assistant
 make run                # go run ./cmd/voice-assistant
 make test               # unit-тесты
 make test-race          # go test -race ./...
+make profile-cpu        # бенчмарки + CPU-профиль (go tool pprof)
+make profile-mem        # бенчмарки + memory-профиль (go tool pprof)
 make migrate-up         # golang-migrate up
 make migrate-down       # golang-migrate down
 make sqlc               # sqlc generate
